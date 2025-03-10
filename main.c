@@ -9,7 +9,7 @@
 #include <sys/uio.h>
 #include <errno.h>
 #include <stdlib.h>
-
+#include <stdint.h>
 // Find current mapped regions using maps
 // Iterate through those regions and use process_vm_readv() to read them
 // Use memchr to find portion of memory
@@ -18,8 +18,16 @@
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
 
-long int *process_range(char *address_range) {
-  long int * current_map = malloc(2 * sizeof(long int));
+char * to_hex_string(uint64_t num)
+{
+  char * result = malloc(sizeof(char)*20);
+	sprintf(result, "%8.8x", (uint32_t)num);
+  return result;
+}
+
+
+uintptr_t *process_range(char *address_range) {
+  uintptr_t * current_map = malloc(2 * sizeof(uintptr_t));
   char astart[20] = {0};
   char aend[20] = {0};
   int delim_index = -1;
@@ -35,8 +43,8 @@ long int *process_range(char *address_range) {
   }
   strncpy(aend, address_range + delim_index, i);
   aend[i+1] = '\0';
-  current_map[0] = strtol(astart, NULL, 16);
-  current_map[1] = strtol(aend, NULL, 16);
+  current_map[0] = strtoul(astart, NULL, 16);
+  current_map[1] = strtoul(aend, NULL, 16);
   return current_map;
 }
 
@@ -48,10 +56,13 @@ int fill_remote_iovec(struct iovec  * remote, FILE *file){
 
   while (i < MAX_LINES && fscanf(file, "%49s %4s %lx %d:%d %d %49[^\n]", 
     address_range, perms, &offset, &dev_major, &dev_minor, &inode, pathname) >= 5) {
-    int * current_map;
+    uint64_t * current_map;
     current_map = process_range(address_range);
-    printf("Start %d \n",current_map[0]);
-    printf("End %d \n",current_map[1]);
+    uintptr_t start = current_map[0];
+    uintptr_t end = current_map[1];
+
+    printf("Start: 0x%lx\n", (unsigned long)start);
+    printf("End:   0x%lx\n", (unsigned long)end);
     i++;
     }
     // Return the read mapped regions
