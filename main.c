@@ -21,6 +21,15 @@ void process_range(const char *address_range, uintptr_t *start,
   sscanf(address_range, "%lx-%lx", start, end);
 }
 
+void print_memory_hex(const void *mem, size_t len) {
+  const unsigned char *p = (const unsigned char *)mem;
+  for (size_t i = 0; i < len; i++) {
+      if (i % 16 == 0) printf("\n%p: ", p + i);  // Print address every 16 bytes
+      printf("%02x ", p[i]);
+  }
+  printf("\n");
+}
+
 int fill_remote_iovec(struct iovec *remote, FILE *file) {
   char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
   unsigned long offset;
@@ -92,6 +101,13 @@ int main(int argc, char **argv) {
   }
 
   printf("Read %zd bytes from %d regions.\n", nread, n);
+
+    // Print memory in hex
+    for (int i = 0; i < n; i++) {
+      printf("\nRegion %d (size: %zd bytes):", i, local[i].iov_len);
+      print_memory_hex(local[i].iov_base, local[i].iov_len);
+  }
+
 
   fclose(file);
   return 0;
