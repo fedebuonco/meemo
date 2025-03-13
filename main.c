@@ -8,25 +8,40 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
-// Find current mapped regions using maps
-// Iterate through those regions and use process_vm_readv() to read them
-// Use memchr to find portion of memory
-// Store them and later perform multiple searches to restric them
-// Allow the user to write them
+#include <stdio.h>
+#include <ctype.h>
+
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
 
-void process_range(const char *address_range, uintptr_t *start,
-                   uintptr_t *end) {
-  sscanf(address_range, "%lx-%lx", start, end);
-}
+void print_memory_hex(const void *local_mem, const void *remote_mem, size_t len, int bytes_per_line) {
+  const unsigned char *p = (const unsigned char *)local_mem;
+  const unsigned char *p_remote = (const unsigned char *)remote_mem;
 
-void print_memory_hex(const void *mem, size_t len) {
-  const unsigned char *p = (const unsigned char *)mem;
+  char current_line[bytes_per_line + 1];
+
   for (size_t i = 0; i < len; i++) {
-      if (i % 16 == 0) printf("\n%p: ", p + i);  // Print address every 16 bytes
+      if (i % bytes_per_line == 0) {
+          if (i != 0) { // Skip first line
+              printf("  %s", current_line);
+          }
+          printf("\n%p: ", p_remote + i);
+      }
       printf("%02x ", p[i]);
+      // .' for non-printable TODO common?
+      current_line[i % bytes_per_line] = isprint(p[i]) ? p[i] : '.';
+      current_line[(i % bytes_per_line) + 1] = '\0';
   }
+
+  // Print last ASCII 
+  size_t remainder = len % bytes_per_line;
+  if (remainder > 0) {
+      for (size_t i = 0; i < (bytes_per_line - remainder); i++) {
+          printf("   ");  // 3 spaces to align with "%02x "
+      }
+      printf("  %s", current_line);
+  }
+
   printf("\n");
 }
 
@@ -41,7 +56,7 @@ int fill_remote_iovec(struct iovec *remote, FILE *file) {
     printf("Filling remote[%d]...\n", i);
 
     uintptr_t start, end;
-    process_range(address_range, &start, &end);
+    sscanf(address_range, "%lx-%lx", &start, &end);
     printf("Start: 0x%lx\n", start);
     printf("End: 0x%lx\n", end);
 
@@ -105,10 +120,10 @@ int main(int argc, char **argv) {
     // Print memory in hex
     for (int i = 0; i < n; i++) {
       printf("\nRegion %d (size: %zd bytes):", i, local[i].iov_len);
-      print_memory_hex(local[i].iov_base, local[i].iov_len);
-  }
-
-
+      printf("\nPress to print region...");
+      getchar();
+      print_memory_hex(local[i].iov_base,remote[i].iov_base, local[i].iov_len,16);
+   }
   fclose(file);
   return 0;
 }
