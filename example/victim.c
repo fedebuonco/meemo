@@ -7,15 +7,15 @@
 #include <unistd.h>
 
 int hp = 80085;  // Known global    memory content
-char *secret = "FEDEBUONCO";
+char* secret = "FEDEBUONCO";
 
 int main() {
-    printf("PID: %d\n", getpid());
-    printf("Find the hp: %d at %p at \n", hp, &hp);
-    printf("Find the secret: %s at %p \n", secret, &secret);
+  printf("PID: %d\n", getpid());
+  printf("Find the hp: %d at %p at \n", hp, &hp);
+  printf("Find the secret: %s at %p \n", secret, &secret);
 
-    while (1) {
-        sleep(1);
-    }
-    return 0;
+  while (1) {
+    sleep(1);
+  }
+  return 0;
 }
