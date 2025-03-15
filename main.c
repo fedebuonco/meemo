@@ -13,6 +13,15 @@
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
 
+void not_implemented() {
+  fprintf(stderr, "Error: Not implemented\n");
+  exit(EXIT_FAILURE);
+}
+
+void search_mem_for_uint32() {
+  not_implemented();
+}
+
 typedef enum {
   TYPE_INT_32,
   TYPE_INT_64,
@@ -21,7 +30,8 @@ typedef enum {
   TYPE_CHAR
 } SearchDataType;
 
-void search_start(void* searched, SearchDataType search_type) {
+void search_start(const void* local_mem, void* searched,
+                  SearchDataType search_type) {
   // Add dynamic struct for saving state and pass it to the search
   // Each search will further filter this state
   // at each iteration we give the ability to the user to stop the search and investigate
@@ -29,15 +39,19 @@ void search_start(void* searched, SearchDataType search_type) {
   switch (search_type) {
     case TYPE_INT_32:
       printf("Starting search for TYPE_INT_32 : %d\n", (int32_t)searched);
+      not_implemented();
       break;
     case TYPE_INT_64:
       printf("Starting search for TYPE_INT_64:  %d\n", (int64_t)searched);
+      not_implemented();
       break;
     case TYPE_UINT_32:
       printf("Starting search for TYPE_UINT_32:  %d\n", (uint32_t)searched);
+      search_mem_for_uint32();
       break;
     case TYPE_UINT_64:
       printf("Starting search for TYPE_UINT_64:  %d\n", (uint64_t)searched);
+      not_implemented();
       break;
     default:
       printf("Unknown type\n");
