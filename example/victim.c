@@ -7,18 +7,25 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-int hp = 80085;  // Known global    memory content
+int hp = 80085;  // Known global memory content
 u_int64_t money = 1337;
-char* secret = "FEDEBUONCO";
 
 int main() {
   printf("PID: %d\n", getpid());
-  printf("Find the hp: %d at %p at \n", hp, &hp);
-  printf("Find the money: %ld at %p at \n", money, &money);
-  printf("Find the secret: %s at %p \n", secret, &secret);
+
+  // Store addresses in local variables to print the same ones later
+  void* hp_addr = &hp;
+  void* money_addr = &money;
+
+  printf("Find the hp: %d at %p\n", hp, hp_addr);
+  printf("Find the money: %ld at %p\n", money, money_addr);
 
   while (1) {
-    sleep(1);
+    sleep(30);  // Print every 30 seconds
+    printf("Printing every 30 seconds:\n");
+    printf("Find the hp: %d at %p\n", hp, hp_addr);
+    printf("Find the money: %ld at %p\n", money, money_addr);
   }
+
   return 0;
 }
