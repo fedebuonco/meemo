@@ -18,7 +18,7 @@ void not_implemented() {
   exit(EXIT_FAILURE);
 }
 
-void search_mem_for_uint32(const void* local_mem, size_t len, int32_t * searched) {  
+void search_mem_for_uint32(const void* local_mem, size_t len, uint32_t * searched) {  
   const unsigned char *p = (const unsigned char*)local_mem;
   for (size_t i = 0; i <= len - sizeof(uint32_t); i++) {
       uint32_t val;
@@ -30,6 +30,48 @@ void search_mem_for_uint32(const void* local_mem, size_t len, int32_t * searched
       }
   }
   printf("Not Found  %d\n",*searched);
+}
+
+void search_mem_for_int32(const void* local_mem, size_t len, int32_t * searched) {  
+  const unsigned char *p = (const unsigned char*)local_mem;
+  for (size_t i = 0; i <= len - sizeof(int32_t); i++) {
+      int32_t val;
+      memcpy(&val, p + i, sizeof(int32_t)); // Safe memory access
+      // printf("Comparing %d with  %d at %p\n",val,  *searched, p+i);
+      if (val == *searched) {
+        printf("Found  %d at %p\n", *searched, p+i);
+        return;
+      }
+  }
+  printf("Not Found  %d\n",*searched);
+}
+
+void search_mem_for_int64(const void* local_mem, size_t len, int64_t * searched) {  
+  const unsigned char *p = (const unsigned char*)local_mem;
+  for (size_t i = 0; i <= len - sizeof(int64_t); i++) {
+      int64_t val;
+      memcpy(&val, p + i, sizeof(int64_t)); // Safe memory access
+      // printf("Comparing %d with  %d at %p\n",val,  *searched, p+i);
+      if (val == *searched) {
+        printf("Found  %ld at %p\n", *searched, p+i);
+        return;
+      }
+  }
+  printf("Not Found  %ld\n",*searched);
+}
+
+void search_mem_for_uint64(const void* local_mem, size_t len, uint64_t * searched) {  
+  const unsigned char *p = (const unsigned char*)local_mem;
+  for (size_t i = 0; i <= len - sizeof(uint64_t); i++) {
+      uint64_t val;
+      memcpy(&val, p + i, sizeof(uint64_t)); // Safe memory access
+      // printf("Comparing %lu with  %lu at %p\n",val,  *searched, p+i);
+      if (val == *searched) {
+        printf("Found  %lu at %p\n", *searched, p+i);
+        return;
+      }
+  }
+  printf("Not Found  %lu\n",*searched);
 }
 
 typedef enum {
@@ -48,20 +90,20 @@ void search_start(const void* local_mem, size_t len, void* searched,
   // the current findings
   switch (search_type) {
     case TYPE_INT_32:
-      printf("Starting search for TYPE_INT_32 : %d\n", (int32_t)searched);
-      not_implemented();
+      printf("Starting search for TYPE_INT_32 : %d\n", *(int32_t*)searched);
+      search_mem_for_int32(local_mem, len, (int32_t *) searched);
       break;
     case TYPE_INT_64:
-      printf("Starting search for TYPE_INT_64:  %d\n", (int64_t)searched);
-      not_implemented();
+      printf("Starting search for TYPE_INT_64:  %ld\n", *(int64_t *)searched);
+      search_mem_for_int64(local_mem, len, (int64_t *) searched);
       break;
     case TYPE_UINT_32:
       printf("Starting search for TYPE_UINT_32:  %d\n", *(uint32_t *)searched);
       search_mem_for_uint32(local_mem, len, (uint32_t *) searched);
       break;
     case TYPE_UINT_64:
-      printf("Starting search for TYPE_UINT_64:  %d\n", (uint64_t)searched);
-      not_implemented();
+      printf("Starting search for TYPE_UINT_64:  %lu\n", *(uint64_t*)searched);
+      search_mem_for_uint64(local_mem, len, (uint64_t *) searched);
       break;
     default:
       printf("Unknown type\n");
@@ -181,6 +223,10 @@ int main(int argc, char** argv) {
     SearchDataType type = TYPE_UINT_32;
     uint32_t searched = 80085;
     search_start(local[i].iov_base, local[i].iov_len, (void *)  &searched, type);
+    getchar();
+    type = TYPE_UINT_64;
+    uint64_t searched_64 = 1337;
+    search_start(local[i].iov_base, local[i].iov_len, (void *)  &searched_64, type);
     getchar();
     print_memory_hex(local[i].iov_base, remote[i].iov_base, local[i].iov_len,
                      16);
