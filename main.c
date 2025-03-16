@@ -18,8 +18,18 @@ void not_implemented() {
   exit(EXIT_FAILURE);
 }
 
-void search_mem_for_uint32() {
-  not_implemented();
+void search_mem_for_uint32(const void* local_mem, size_t len, int32_t * searched) {  
+  const unsigned char *p = (const unsigned char*)local_mem;
+  for (size_t i = 0; i <= len - sizeof(uint32_t); i++) {
+      uint32_t val;
+      memcpy(&val, p + i, sizeof(uint32_t)); // Safe memory access
+      // printf("Comparing %d with  %d at %p\n",val,  *searched, p+i);
+      if (val == *searched) {
+        printf("Found  %d at %p\n", *searched, p+i);
+        return;
+      }
+  }
+  printf("Not Found  %d\n",*searched);
 }
 
 typedef enum {
@@ -30,7 +40,7 @@ typedef enum {
   TYPE_CHAR
 } SearchDataType;
 
-void search_start(const void* local_mem, void* searched,
+void search_start(const void* local_mem, size_t len, void* searched,
                   SearchDataType search_type) {
   // Add dynamic struct for saving state and pass it to the search
   // Each search will further filter this state
@@ -46,8 +56,8 @@ void search_start(const void* local_mem, void* searched,
       not_implemented();
       break;
     case TYPE_UINT_32:
-      printf("Starting search for TYPE_UINT_32:  %d\n", (uint32_t)searched);
-      search_mem_for_uint32();
+      printf("Starting search for TYPE_UINT_32:  %d\n", *(uint32_t *)searched);
+      search_mem_for_uint32(local_mem, len, (uint32_t *) searched);
       break;
     case TYPE_UINT_64:
       printf("Starting search for TYPE_UINT_64:  %d\n", (uint64_t)searched);
@@ -166,6 +176,11 @@ int main(int argc, char** argv) {
   for (int i = 0; i < n; i++) {
     printf("\nRegion %d (size: %zd bytes):", i, local[i].iov_len);
     printf("\nPress to print region...");
+    getchar();
+    // Search
+    SearchDataType type = TYPE_UINT_32;
+    uint32_t searched = 80085;
+    search_start(local[i].iov_base, local[i].iov_len, (void *)  &searched, type);
     getchar();
     print_memory_hex(local[i].iov_base, remote[i].iov_base, local[i].iov_len,
                      16);
