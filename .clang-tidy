@@ -10,5 +10,3 @@ CheckOptions:
     value:           '_t'
   - key:             fuchsia-restrict-system-includes.Includes
     value:           '*,-stdint.h,-stdbool.h,-assert.h'
-
-...
