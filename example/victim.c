@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 int hp = 80085;  // Known global    memory content
-u_int64_t  money = 1337;
+u_int64_t money = 1337;
 char* secret = "FEDEBUONCO";
 
 int main() {
