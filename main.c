@@ -1,3 +1,4 @@
+#include <stddef.h>
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <errno.h>
@@ -84,6 +85,25 @@ typedef enum {
   TYPE_UINT_64,
   TYPE_CHAR
 } SearchDataType;
+
+size_t outer_search_st(struct iovec *in_mem, size_t regions, void* searched, SearchDataType search_type, struct iovec * out_mem){
+  // Traverse mem for n=regions and create for each founs searched another struct iovec and return the
+  // array. The array should be passed to search_st again to narrow down the search.
+  // Goal of outer search step is to traverse the iovec in_mem.
+  size_t current_step_regions = 0;
+  for (size_t i = 0; i < regions; i++) {
+     // function that scan the whole region and finds the searched of search_type.
+     // every time something is found, a result is added to the out_mem and the 
+     // current_step_regions is increased.
+     // Goal of the inner search step is to dispatch the search_type
+     // then the inner_search_step_for_xx will find all the occurence and add them to the out_mem
+     // and update the current_step_regions.
+     // The end of this outer_search_st will thus be a struct iovec * out_mem
+     // TODO actually here I need to get the original address since I need to everytime re read the original process memory.
+     // I need iovec that also conserves the original address
+    // search(in_mem[i].iov_base, in_mem[i].iov_len, searched, search_type, out_mem, &current_step_regions); 
+    }
+}
 
 void search_step(const void* local_mem, size_t len, void* searched,
                  SearchDataType search_type) {
