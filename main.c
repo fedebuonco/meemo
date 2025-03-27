@@ -14,6 +14,47 @@
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
 
+typedef struct {
+  struct iovec * data;
+  size_t size;
+  size_t capacity;
+}dynamic_iovec_array;
+
+#define INITIAL_IOVEC_ARRAY_CAP 128
+
+dynamic_iovec_array init_iovec_array(size_t initial_capacity){
+  dynamic_iovec_array arr;
+  arr.size = 0;
+  arr.capacity = initial_capacity;
+  arr.data = (struct iovec *) calloc(arr.capacity, sizeof(struct iovec));
+  if (!arr.data) {
+        perror("Failed to allocate memory");
+        exit(EXIT_FAILURE);
+  }
+  return arr;   
+}
+
+void add_iovec(dynamic_iovec_array *arr, struct iovec value) {
+  if (arr->size == arr->capacity) {
+    arr->capacity *= 2;  
+    struct iovec *new_data = realloc(arr->data, arr->capacity * sizeof(struct iovec));
+    if (!new_data) {
+      perror("Failed to reallocate memory");
+      exit(EXIT_FAILURE);
+    }
+    arr->data = new_data;
+  }
+    
+  arr->data[arr->size++] = value;
+}
+
+void free_iovec_array(dynamic_iovec_array * arr) {
+    free(arr->data);
+    arr->data = NULL;
+    arr->size = 0;
+    arr->capacity = 0;
+}
+
 void search_step_for_uint32(const void* local_mem, size_t len,
                             uint32_t* searched) {
   const unsigned char* p = (const unsigned char*)local_mem;
@@ -86,24 +127,24 @@ typedef enum {
   TYPE_CHAR
 } SearchDataType;
 
-size_t outer_search_st(struct iovec *in_mem, size_t regions, void* searched, SearchDataType search_type, struct iovec * out_mem){
-  // Traverse mem for n=regions and create for each founs searched another struct iovec and return the
-  // array. The array should be passed to search_st again to narrow down the search.
-  // Goal of outer search step is to traverse the iovec in_mem.
-  size_t current_step_regions = 0;
-  for (size_t i = 0; i < regions; i++) {
-     // function that scan the whole region and finds the searched of search_type.
-     // every time something is found, a result is added to the out_mem and the 
-     // current_step_regions is increased.
-     // Goal of the inner search step is to dispatch the search_type
-     // then the inner_search_step_for_xx will find all the occurence and add them to the out_mem
-     // and update the current_step_regions.
-     // The end of this outer_search_st will thus be a struct iovec * out_mem
-     // TODO actually here I need to get the original address since I need to everytime re read the original process memory.
-     // I need iovec that also conserves the original address
-    // search(in_mem[i].iov_base, in_mem[i].iov_len, searched, search_type, out_mem, &current_step_regions); 
-    }
-}
+// size_t outer_search_st(struct iovec *in_mem, size_t regions, void* searched, SearchDataType search_type, struct iovec * out_mem){
+//   // Traverse mem for n=regions and create for each founs searched another struct iovec and return the
+//   // array. The array should be passed to search_st again to narrow down the search.
+//   // Goal of outer search step is to traverse the iovec in_mem.
+//   size_t current_step_regions = 0;
+//   for (size_t i = 0; i < regions; i++) {
+//      // function that scan the whole region and finds the searched of search_type.
+//      // every time something is found, a result is added to the out_mem and the 
+//      // current_step_regions is increased.
+//      // Goal of the inner search step is to dispatch the search_type
+//      // then the inner_search_step_for_xx will find all the occurence and add them to the out_mem
+//      // and update the current_step_regions.
+//      // The end of this outer_search_st will thus be a struct iovec * out_mem
+//      // TODO actually here I need to get the original address since I need to everytime re read the original process memory.
+//      // I need iovec that also conserves the original address
+//     // search(in_mem[i].iov_base, in_mem[i].iov_len, searched, search_type, out_mem, &current_step_regions); 
+//     }
+// }
 
 void search_step(const void* local_mem, size_t len, void* searched,
                  SearchDataType search_type) {
@@ -165,7 +206,7 @@ void print_memory_hex(const void* local_mem, const void* remote_mem, size_t len,
   printf("\n");
 }
 
-int fill_remote_iovec(struct iovec* remote, FILE* file) {
+int fill_remote_iovec(dynamic_iovec_array * remote, FILE* file) {
   char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
   unsigned long offset;
   int dev_major, dev_minor, inode;
@@ -182,9 +223,12 @@ int fill_remote_iovec(struct iovec* remote, FILE* file) {
 
     ssize_t len = end - start;
     printf("Length: 0x%zx\n", len);
-    remote[i].iov_base = (void*)start;
-    remote[i].iov_len = end - start;
-
+    // Create the iovec and add it to the dynamic array
+    struct iovec temp;
+    temp.iov_base = (void*) start;
+    temp.iov_len = end - start;
+    add_iovec(remote,temp);
+   
     i++;
   }
   return i;
@@ -202,17 +246,33 @@ int main(int argc, char** argv) {
     perror("Error opening file");
     return 1;
   }
-  struct iovec remote[500];
-  int n = fill_remote_iovec(remote, file);
-  struct iovec local[n];
-  // Build local iovec structs
-  for (int i = 0; i < n; i++) {
-    local[i].iov_base = calloc(remote[i].iov_len, sizeof(char));
-    local[i].iov_len = remote[i].iov_len;
-  }
+  // Create the two iovec for local and remote
+  dynamic_iovec_array remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+  int n = fill_remote_iovec(&remote, file);
 
-  ssize_t nread = process_vm_readv(user_input_pid, local, n, remote, n, 0);
-  if (nread < 0) {
+  dynamic_iovec_array local = init_iovec_array(n);
+
+  // Populate local iovec with valid buffers
+for (int i = 0; i < remote.size; i++) {
+    // Allocate a buffer for each remote region
+    void* buffer = malloc(remote.data[i].iov_len);
+    if (!buffer) {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize the local iovec entry
+    struct iovec local_iov = {
+        .iov_base = buffer,
+        .iov_len = remote.data[i].iov_len
+    };
+
+    // Add to the local array
+    add_iovec(&local, local_iov);
+}
+
+  ssize_t nread = process_vm_readv(user_input_pid, local.data, n, remote.data, n, 0);
+  if (nread <= 0) {
     switch (errno) {
       case EINVAL:
         printf("ERROR: Invalid arguments.\n");
@@ -239,16 +299,16 @@ int main(int argc, char** argv) {
 
   // Print memory in hex
   for (int i = 0; i < n; i++) {
-    printf("\nRegion %d (size: %zd bytes):", i, local[i].iov_len);
+    printf("\nRegion %d (size: %zd bytes):", i, local.data[i].iov_len);
     printf("\nPress to print region...");
     // Search
     SearchDataType type = TYPE_UINT_32;
     uint32_t searched = 80085;
-    search_step(local[i].iov_base, local[i].iov_len, (void*)&searched, type);
+    search_step(local.data[i].iov_base, local.data[i].iov_len, (void*)&searched, type);
     type = TYPE_UINT_64;
     uint64_t searched_64 = 1337;
-    search_step(local[i].iov_base, local[i].iov_len, (void*)&searched_64, type);
-    print_memory_hex(local[i].iov_base, remote[i].iov_base, local[i].iov_len,
+    search_step(local.data[i].iov_base, local.data[i].iov_len, (void*)&searched_64, type);
+    print_memory_hex(local.data[i].iov_base, remote.data[i].iov_base, local.data[i].iov_len,
                      16);
   }
   fclose(file);
