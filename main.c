@@ -71,15 +71,28 @@ void search_step_for_uint32(const void* local_mem, size_t len,
   printf("Not Found  %d\n", *searched);
 }
 
-void search_step_for_int32(const void* local_mem, size_t len,
+void search_step_for_int32(const void* local_mem, const void* remote_mem, dynamic_iovec_array * next_remote_iov_array, size_t len,
                            int32_t* searched) {
   const unsigned char* p = (const unsigned char*)local_mem;
+  const unsigned char* p_remote = (const unsigned char*)remote_mem;
   for (size_t i = 0; i <= len - sizeof(int32_t); i++) {
     int32_t val;
     memcpy(&val, p + i, sizeof(int32_t));  // Safe memory access
     // printf("Comparing %d with  %d at %p\n",val,  *searched, p+i);
     if (val == *searched) {
-      printf("Found  %d at %p\n", *searched, p + i);
+      printf("Found  %d at %p\n in local.", *searched, p + i);
+      printf("Found  %d at %p\n in remote.", *searched, p_remote + i);
+
+      // I now fill the next remote iovec so that it will be used to
+      // get and read the data for the next 
+      struct iovec next_remote_iov = {
+        .iov_base = p_remote+i,
+        .iov_len = sizeof(int32_t)
+      };
+
+    // Add to the next_remote_iov array
+    add_iovec(next_remote_iov_array, next_remote_iov);
+
       getchar();
       return;
     }
@@ -127,35 +140,53 @@ typedef enum {
   TYPE_CHAR
 } SearchDataType;
 
-// size_t outer_search_st(struct iovec *in_mem, size_t regions, void* searched, SearchDataType search_type, struct iovec * out_mem){
-//   // Traverse mem for n=regions and create for each founs searched another struct iovec and return the
-//   // array. The array should be passed to search_st again to narrow down the search.
-//   // Goal of outer search step is to traverse the iovec in_mem.
-//   size_t current_step_regions = 0;
-//   for (size_t i = 0; i < regions; i++) {
-//      // function that scan the whole region and finds the searched of search_type.
-//      // every time something is found, a result is added to the out_mem and the 
-//      // current_step_regions is increased.
-//      // Goal of the inner search step is to dispatch the search_type
-//      // then the inner_search_step_for_xx will find all the occurence and add them to the out_mem
-//      // and update the current_step_regions.
-//      // The end of this outer_search_st will thus be a struct iovec * out_mem
-//      // TODO actually here I need to get the original address since I need to everytime re read the original process memory.
-//      // I need iovec that also conserves the original address
-//     // search(in_mem[i].iov_base, in_mem[i].iov_len, searched, search_type, out_mem, &current_step_regions); 
-//     }
+
+
+// // Finds the value in the local memory, then uses the old remote memory to get the
+// // address and creates the next step remote.
+// // This next step will be ready to be used for another read into local memory.
+// dynamic_iovec_array search_result_remote(const void* local_mem, size_t len, void * value, SearchDataType search_type){
+  
 // }
 
-void search_step(const void* local_mem, size_t len, void* searched,
+ssize_t  read_from_remote(pid_t pid, struct iovec * lvec, size_t ln, struct iovec * rvec, size_t rn){
+  ssize_t nread = process_vm_readv(pid,lvec, ln, rvec, rn, 0);
+  if (nread <= 0) {
+    switch (errno) {
+      case EINVAL:
+        printf("ERROR: Invalid arguments.\n");
+        break;
+      case EFAULT:
+        printf("ERROR: Unable to access target memory.\n");
+        break;
+      case ENOMEM:
+        printf("ERROR: Memory allocation failed.\n");
+        break;
+      case EPERM:
+        printf("ERROR: Insufficient privileges.\n");
+        break;
+      case ESRCH:
+        printf("ERROR: Process does not exist.\n");
+        break;
+      default:
+        printf("ERROR: Unknown error occurred.\n");
+    }
+    return 1;
+  }
+  return nread;
+}
+
+void search_step(const void* local_mem, const void* remote_mem, size_t len, void* searched,
                  SearchDataType search_type) {
   // Add dynamic struct for saving state and pass it to the search
   // Each search will further filter this state
   // at each iteration we give the ability to the user to stop the search and investigate
   // the current findings
+  dynamic_iovec_array next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
   switch (search_type) {
     case TYPE_INT_32:
       printf("Starting search for TYPE_INT_32 : %d\n", *(int32_t*)searched);
-      search_step_for_int32(local_mem, len, (int32_t*)searched);
+      search_step_for_int32(local_mem, remote_mem, &next_remote_iov_array, len, (int32_t*)searched);
       break;
     case TYPE_INT_64:
       printf("Starting search for TYPE_INT_64:  %ld\n", *(int64_t*)searched);
@@ -172,6 +203,8 @@ void search_step(const void* local_mem, size_t len, void* searched,
     default:
       printf("Unknown type\n");
   }
+  // Now read again
+
 }
 
 void print_memory_hex(const void* local_mem, const void* remote_mem, size_t len,
@@ -252,9 +285,9 @@ int main(int argc, char** argv) {
 
   dynamic_iovec_array local = init_iovec_array(n);
 
-  // Populate local iovec with valid buffers
-for (int i = 0; i < remote.size; i++) {
-    // Allocate a buffer for each remote region
+  // Use remote size to allocate  
+  // TODO this needs to be made a function and to free after that.
+  for (int i = 0; i < remote.size; i++) {
     void* buffer = malloc(remote.data[i].iov_len);
     if (!buffer) {
         perror("malloc failed");
@@ -271,29 +304,7 @@ for (int i = 0; i < remote.size; i++) {
     add_iovec(&local, local_iov);
 }
 
-  ssize_t nread = process_vm_readv(user_input_pid, local.data, n, remote.data, n, 0);
-  if (nread <= 0) {
-    switch (errno) {
-      case EINVAL:
-        printf("ERROR: Invalid arguments.\n");
-        break;
-      case EFAULT:
-        printf("ERROR: Unable to access target memory.\n");
-        break;
-      case ENOMEM:
-        printf("ERROR: Memory allocation failed.\n");
-        break;
-      case EPERM:
-        printf("ERROR: Insufficient privileges.\n");
-        break;
-      case ESRCH:
-        printf("ERROR: Process does not exist.\n");
-        break;
-      default:
-        printf("ERROR: Unknown error occurred.\n");
-    }
-    return 1;
-  }
+  ssize_t nread =read_from_remote(user_input_pid, local.data, local.size,remote.data, remote.size);
 
   printf("Read %zd bytes from %d regions.\n", nread, n);
 
@@ -304,10 +315,7 @@ for (int i = 0; i < remote.size; i++) {
     // Search
     SearchDataType type = TYPE_UINT_32;
     uint32_t searched = 80085;
-    search_step(local.data[i].iov_base, local.data[i].iov_len, (void*)&searched, type);
-    type = TYPE_UINT_64;
-    uint64_t searched_64 = 1337;
-    search_step(local.data[i].iov_base, local.data[i].iov_len, (void*)&searched_64, type);
+    search_step(local.data[i].iov_base, remote.data[i].iov_base, local.data[i].iov_len, (void*)&searched, type);
     print_memory_hex(local.data[i].iov_base, remote.data[i].iov_base, local.data[i].iov_len,
                      16);
   }
