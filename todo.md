@@ -1,8 +1,10 @@
 # TODO
 ## Add opt parsing
-## Implement search structure for repetitive searches
+
 
 # IN PROGRESS
+## Implement easy read where dia for local is correctly init and returned
+## Implement search structure for repetitive searches
 
 # DONE
 ## Read Memory of victim
