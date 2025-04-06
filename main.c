@@ -68,44 +68,27 @@ void print_dia(const DIA* arr) {
   }
 }
 
-void search_step_for_uint32(const void* local_mem, const void* remote_mem,
-                            DIA* next_remote_iov_array, size_t len,
-                            uint32_t* searched) {
-  const unsigned char* p = (const unsigned char*)local_mem;
-  const unsigned char* p_remote = (const unsigned char*)remote_mem;
-
-  for (size_t i = 0; i <= len - sizeof(uint32_t); i++) {
-    uint32_t val;
-    memcpy(&val, p + i, sizeof(uint32_t));  // Safe memory access
-    if (val == *searched) {
-      printf("\nFound  %d at %p in local.", *searched, p + i);
-      printf("\nFound  %d at %p in remote.", *searched, p_remote + i);
-
-      // I now fill the next remote iovec so that it will be used to
-      // get and read the data for the next
-      struct iovec next_remote_iov = {.iov_base = p_remote + i,
-                                      .iov_len = sizeof(int32_t)};
-
-      add_iovec(next_remote_iov_array, next_remote_iov);
-    }
-  }
-  printf("Not Found  %d\n", *searched);
-}
-
-void search_step_for_uint32_dia(DIA* local_mem, DIA* remote_mem,
+void search_step_for_uint32_dia(DIA* local, DIA* remote,
                                 DIA* next_remote_iov_array, size_t len,
                                 uint32_t* searched) {
-  for (int nr = 0; nr <= len; nr++) {
-    const unsigned char* p = (const unsigned char*)local_mem->data;
-    const unsigned char* p_remote = (const unsigned char*)remote_mem->data;
+  for (int n_regions = 0; n_regions <= len; n_regions++) {
+    if (n_regions != 4)
+      continue;
+    const unsigned char* p =
+        (const unsigned char*)local->data[n_regions].iov_base;
+    const unsigned char* p_remote =
+        (const unsigned char*)remote->data[n_regions].iov_base;
 
-    for (size_t i = 0; i <= -sizeof(uint32_t); i++) {
+    for (size_t i = 0; i <= local->data[n_regions].iov_len - sizeof(uint32_t);
+         i++) {
       uint32_t val;
       memcpy(&val, p + i, sizeof(uint32_t));  // Safe memory access
-      printf("\nComparing  %d\n", val);
       if (val == *searched) {
-        printf("\nFound  %d at %p in local.", *searched, p + i);
-        printf("\nFound  %d at %p in remote.", *searched, p_remote + i);
+        printf("\nFound  %d at %p in local, region number %d", *searched, p + i,
+               n_regions);
+        printf("\nFound  %d at %p in remote, region number %d", *searched,
+               p_remote + i, n_regions);
+        getchar();
 
         // I now fill the next remote iovec so that it will be used to
         // get and read the data for the next
@@ -115,7 +98,6 @@ void search_step_for_uint32_dia(DIA* local_mem, DIA* remote_mem,
         add_iovec(next_remote_iov_array, next_remote_iov);
       }
     }
-    printf("Not Found  %d\n", *searched);
   }
 }
 
@@ -168,36 +150,37 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
   return nread;
 }
 
-ssize_t read_from_remote(pid_t pid, struct iovec* lvec, size_t ln,
-                         struct iovec* rvec, size_t rn) {
-  ssize_t nread = process_vm_readv(pid, lvec, ln, rvec, rn, 0);
-  if (nread <= 0) {
-    switch (errno) {
-      case EINVAL:
-        printf("ERROR: Invalid arguments.\n");
-        break;
-      case EFAULT:
-        printf("ERROR: Unable to access target memory.\n");
-        break;
-      case ENOMEM:
-        printf("ERROR: Memory allocation failed.\n");
-        break;
-      case EPERM:
-        printf("ERROR: Insufficient privileges.\n");
-        break;
-      case ESRCH:
-        printf("ERROR: Process does not exist.\n");
-        break;
-      default:
-        printf("ERROR: Unknown error occurred.\n");
-    }
-    return 1;
+int fill_remote_dia(DIA* remote, FILE* file) {
+  char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
+  unsigned long offset;
+  int dev_major, dev_minor, inode;
+  int i = 0;
+  while (i < MAX_LINES &&
+         fscanf(file, "%s %s %lx %d:%d %d %[^\n]", address_range, perms,
+                &offset, &dev_major, &dev_minor, &inode, pathname) >= 4) {
+    printf("Filling remote[%d]...\n", i);
+
+    uintptr_t start, end;
+    sscanf(address_range, "%lx-%lx", &start, &end);
+    printf("Start: 0x%lx\n", start);
+    printf("End: 0x%lx\n", end);
+
+    ssize_t len = end - start;
+    printf("Length: 0x%zx\n", len);
+    // Create the iovec and add it to the dynamic array
+    struct iovec temp;
+    temp.iov_base = (void*)start;
+    temp.iov_len = end - start;
+    add_iovec(remote, temp);
+
+    i++;
   }
-  return nread;
+  return i;
 }
 
 void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
-                     void* searched, SearchDataType search_type) {
+                     void* searched, SearchDataType search_type, FILE* file,
+                     pid_t pid) {
   // If searched not specified already
   if (searched == NULL) {
     char searched_str[MAX_STR_LEN];
@@ -205,10 +188,12 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
     scanf("%s", searched_str);
     uint32_t searched_int = strtoul(searched_str, NULL, 10);
     searched = (void*)&searched_int;
-    assert(searched_int == 80085);
   }
+
   // Create the dia for the next search step
   DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+
+  // Switch on type
   switch (search_type) {
     case TYPE_UINT_32:
       printf("\nStarting search for TYPE_UINT_32:  %d\n", *(uint32_t*)searched);
@@ -218,99 +203,20 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
     default:
       printf("Unknown type\n");
   }
-  // Now read again
+
+  // Now read again only if found something
   if (next_remote_iov_array.size == 0) {
     return;
   }
+
   print_dia(&next_remote_iov_array);
-  DIA next_local_array = init_iovec_array(next_remote_iov_array.size);
-  for (int i = 0; i < next_remote_iov_array.size; i++) {
-    void* buffer = malloc(next_remote_iov_array.data[i].iov_len);
-    if (!buffer) {
-      perror("malloc failed");
-      exit(EXIT_FAILURE);
-    }
-    // Initialize the local iovec entry
-    struct iovec local_iov = {.iov_base = buffer,
-                              .iov_len = next_remote_iov_array.data[i].iov_len};
 
-    add_iovec(&next_local_array, local_iov);
-  }
-  search_step_dia(&next_local_array, &next_remote_iov_array,
-                  next_remote_iov_array.size, searched, search_type);
-}
+  int nread = fill_remote_dia(&next_remote_iov_array, file);
+  DIA next_local = init_iovec_array(next_remote_iov_array.size);
+  ssize_t read = read_from_remote_dia(pid, &next_local, &next_remote_iov_array);
 
-void search_step(const void* local_mem, const void* remote_mem, size_t len,
-                 void* searched, SearchDataType search_type) {
-  if (searched == NULL) {
-    char searched_str[MAX_STR_LEN];
-    printf("\nProvide a searched: ");
-    scanf("%s", searched_str);
-    uint32_t searched_int = strtoul(searched_str, NULL, 10);
-    searched = (void*)&searched_int;
-  }
-  DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-  switch (search_type) {
-    case TYPE_UINT_32:
-      printf("\nStarting search for TYPE_UINT_32:  %d\n", *(uint32_t*)searched);
-      search_step_for_uint32(local_mem, remote_mem, &next_remote_iov_array, len,
-                             (uint32_t*)searched);
-      break;
-    default:
-      printf("Unknown type\n");
-  }
-  // Now read again
-  if (next_remote_iov_array.size == 0) {
-    return;
-  }
-  print_dia(&next_remote_iov_array);
-  DIA next_local_array = init_iovec_array(next_remote_iov_array.size);
-  for (int i = 0; i < next_remote_iov_array.size; i++) {
-    void* buffer = malloc(next_remote_iov_array.data[i].iov_len);
-    if (!buffer) {
-      perror("malloc failed");
-      exit(EXIT_FAILURE);
-    }
-    // Initialize the local iovec entry
-    struct iovec local_iov = {.iov_base = buffer,
-                              .iov_len = next_remote_iov_array.data[i].iov_len};
-
-    add_iovec(&next_local_array, local_iov);
-  }
-  search_step(next_local_array.data, next_remote_iov_array.data,
-              next_remote_iov_array.size, searched, search_type);
-}
-
-void print_memory_hex(const void* local_mem, const void* remote_mem, size_t len,
-                      int bytes_per_line) {
-  const unsigned char* p = (const unsigned char*)local_mem;
-  const unsigned char* p_remote = (const unsigned char*)remote_mem;
-
-  char current_line[bytes_per_line + 1];
-
-  for (size_t i = 0; i < len; i++) {
-    if (i % bytes_per_line == 0) {
-      if (i != 0) {  // Skip first line
-        printf("  %s", current_line);
-      }
-      printf("\n%p: ", p_remote + i);
-    }
-    printf("%02x ", p[i]);
-    // .' for non-printable TODO common?
-    current_line[i % bytes_per_line] = isprint(p[i]) ? p[i] : '.';
-    current_line[(i % bytes_per_line) + 1] = '\0';
-  }
-
-  // Print last ASCII
-  size_t remainder = len % bytes_per_line;
-  if (remainder > 0) {
-    for (size_t i = 0; i < (bytes_per_line - remainder); i++) {
-      printf("   ");  // 3 spaces to align with "%02x "
-    }
-    printf("  %s", current_line);
-  }
-
-  printf("\n");
+  search_step_dia(&next_local, &next_remote_iov_array,
+                  next_remote_iov_array.size, searched, search_type, file, pid);
 }
 
 void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
@@ -354,34 +260,6 @@ void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
   }
 }
 
-int fill_remote_iovec(DIA* remote, FILE* file) {
-  char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
-  unsigned long offset;
-  int dev_major, dev_minor, inode;
-  int i = 0;
-  while (i < MAX_LINES &&
-         fscanf(file, "%s %s %lx %d:%d %d %[^\n]", address_range, perms,
-                &offset, &dev_major, &dev_minor, &inode, pathname) >= 4) {
-    printf("Filling remote[%d]...\n", i);
-
-    uintptr_t start, end;
-    sscanf(address_range, "%lx-%lx", &start, &end);
-    printf("Start: 0x%lx\n", start);
-    printf("End: 0x%lx\n", end);
-
-    ssize_t len = end - start;
-    printf("Length: 0x%zx\n", len);
-    // Create the iovec and add it to the dynamic array
-    struct iovec temp;
-    temp.iov_base = (void*)start;
-    temp.iov_len = end - start;
-    add_iovec(remote, temp);
-
-    i++;
-  }
-  return i;
-}
-
 int main(int argc, char** argv) {
   char* p;
   pid_t user_input_pid = (pid_t)strtol(argv[1], &p, 10);
@@ -396,7 +274,7 @@ int main(int argc, char** argv) {
   }
   // Create the two iovec for local and remote
   DIA remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-  int n = fill_remote_iovec(&remote, file);
+  int n = fill_remote_dia(&remote, file);
   DIA local = init_iovec_array(n);
   ssize_t nread = read_from_remote_dia(user_input_pid, &local, &remote);
   printf("Read %zd bytes from %d regions.\n", nread, n);
@@ -407,7 +285,7 @@ int main(int argc, char** argv) {
   // print_memory_hex_from_dia(&local, &remote,16);
 
   SearchDataType type = TYPE_UINT_32;
-  search_step_dia(&local, &remote, n, NULL, type);
+  search_step_dia(&local, &remote, n, NULL, type, file, user_input_pid);
 
   fclose(file);
   return 0;
