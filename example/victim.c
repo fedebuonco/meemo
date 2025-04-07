@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 int hp = 80085;  // Known global memory content
-u_int64_t money = 1337;
+int32_t money = 1337;
 
 int main() {
     printf("PID: %d\n", getpid());
@@ -18,7 +18,7 @@ int main() {
     void* money_addr = &money;
 
     printf("Find the hp: %d at %p\n", hp, hp_addr);
-    printf("Find the money: %ld at %p\n", money, money_addr);
+    printf("Find the money: %d at %p\n", money, money_addr);
 
     int counter = 0;  // Keep track of elapsed time in seconds
 
@@ -28,12 +28,13 @@ int main() {
 
         if (counter >= 60) {
             money++;  // Increase money every 60 seconds
+            hp++;  // Increase money every 60 seconds
             counter = 0;
         }
 
         printf("Printing every 30 seconds:\n");
         printf("Find the hp: %d at %p\n", hp, hp_addr);
-        printf("Find the money: %ld at %p\n", money, money_addr);
+        printf("Find the money: %d at %p\n", money, money_addr);
     }
 
     return 0;

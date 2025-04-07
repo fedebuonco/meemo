@@ -1,4 +1,5 @@
 project('memmo', 'c')
+add_project_arguments('-g', language: 'c')  # Enable debugging
 # Find Clang-Format and Clang-Tidy
 clang_format = find_program('clang-format', required: false)
 # clang_tidy = find_program('clang-tidy', required: false)

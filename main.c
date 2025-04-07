@@ -83,10 +83,10 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
              i <= local->data[n_regions].iov_len - sizeof(uint32_t); i++) {
             uint32_t val;
             memcpy(&val, p + i, sizeof(uint32_t));  // Safe memory access
-            // printf("\nComparing %d with %d", *searched, val);
+            // printf("\nComparing %d with %d at \nLOCAL: %p and at  REMOTE %p", *searched, val, p+i, p_remote + i );
             if (val == *searched) {
-                printf("\nFound  %d at %p in local, region number %d",
-                       *searched, p + i, n_regions);
+                // printf("\nFound  %d at %p in local, region number %d",
+                //        *searched, p + i, n_regions);
                 printf("\nFound  %d at %p in remote, region number %d",
                        *searched, p_remote + i, n_regions);
 
@@ -224,8 +224,7 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
     fprintf(stderr, "DEBUG: search_step_dia called\n");
     fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
             search_type);
-    fprintf(stderr, "local_dia: %p, remote_dia: %p, searched: %p\n",
-            (void*)local_dia, (void*)remote_dia, searched);
+    print_dia(remote_dia);
     // If searched not specified already
         char searched_str[MAX_STR_LEN];
         printf("\nProvide a searched: ");
@@ -252,7 +251,10 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
     // Now read again only if found something
     if (next_remote_iov_array.size == 0) {
         printf("\nNo result for the searched.");
-        return;
+        // next step use same dias
+        search_step_dia(local_dia, remote_dia,
+            remote_dia->size, searched, search_type, file,
+            pid);
     }
 
     // Present them and ask which to write
@@ -267,7 +269,7 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
 
     // Uncomment for printing
     printf("\nPress ENTER to continue... ");
-    // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
+    print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
 
     search_step_dia(&next_local, &next_remote_iov_array,
                     next_remote_iov_array.size, searched, search_type, file,
