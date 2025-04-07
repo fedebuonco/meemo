@@ -59,7 +59,7 @@ void free_iovec_array(DIA* arr) {
 
 void print_iovec(const struct iovec* io) {
     printf("Base: %p", io->iov_base);
-    printf("\tLen: %d", (int)io->iov_len);    
+    printf("\tLen: %d", (int)io->iov_len);
 }
 
 void print_dia(const DIA* arr) {
@@ -221,16 +221,76 @@ void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
 void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
                      void* searched, SearchDataType search_type, FILE* file,
                      pid_t pid) {
+    fprintf(stderr, "\n\n");
     fprintf(stderr, "DEBUG: search_step_dia called\n");
     fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
             search_type);
     print_dia(remote_dia);
     // If searched not specified already
-        char searched_str[MAX_STR_LEN];
-        printf("\nProvide a searched: ");
-        scanf("%s", searched_str);
-        uint32_t searched_int = strtoul(searched_str, NULL, 10);
-        searched = (void*)&searched_int;
+    char searched_str[MAX_STR_LEN];
+    printf("\nProvide a searched: ");
+    scanf("%s", searched_str);
+    uint32_t searched_int = strtoul(searched_str, NULL, 10);
+    searched = (void*)&searched_int;
+
+    // Create the dia for the next search step
+    DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+
+    // Switch on type
+    switch (search_type) {
+        case TYPE_UINT_32:
+            printf("\nStarting search for TYPE_UINT_32:  %d",
+                   *(uint32_t*)searched);
+                   ssize_t read =
+                   read_from_remote_dia(pid, local_dia, remote_dia);
+            search_step_for_uint32_dia(local_dia, remote_dia,
+                                       &next_remote_iov_array, len,
+                                       (uint32_t*)searched);
+            break;
+        default:
+            printf("\nUnknown type");
+    }
+
+    // Now read again only if found something
+    if (next_remote_iov_array.size == 0) {
+        printf("\nNo result for the searched.");
+        // next step use same dias
+        search_step_dia(local_dia, remote_dia, remote_dia->size, searched,
+                        search_type, file, pid);
+    }
+
+    // Present them and ask which to write
+    if (next_remote_iov_array.size <= WRITE_ASK) {
+        print_dia(&next_remote_iov_array);
+    }
+
+    printf("\nPreparing for next step...");
+    DIA next_local = init_iovec_array(next_remote_iov_array.size);
+    ssize_t read =
+        read_from_remote_dia(pid, &next_local, &next_remote_iov_array);
+
+    // Uncomment for printing
+    printf("\nPress ENTER to continue... ");
+    print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
+
+    search_step_dia(&next_local, &next_remote_iov_array,
+                    next_remote_iov_array.size, searched, search_type, file,
+                    pid);
+}
+
+void first_search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
+                     void* searched, SearchDataType search_type, FILE* file,
+                     pid_t pid) {
+    fprintf(stderr, "DEBUG: search_step_dia called\n");
+    fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
+            search_type);
+    print_dia(remote_dia);
+    // If searched not specified already
+    char searched_str[MAX_STR_LEN];
+    printf("\nProvide a searched: ");
+    scanf("%s", searched_str);
+    uint32_t searched_int = strtoul(searched_str, NULL, 10);
+    searched = (void*)&searched_int;
 
     // Create the dia for the next search step
     DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
@@ -252,24 +312,21 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
     if (next_remote_iov_array.size == 0) {
         printf("\nNo result for the searched.");
         // next step use same dias
-        search_step_dia(local_dia, remote_dia,
-            remote_dia->size, searched, search_type, file,
-            pid);
+        search_step_dia(local_dia, remote_dia, remote_dia->size, searched,
+                        search_type, file, pid);
     }
 
     // Present them and ask which to write
     if (next_remote_iov_array.size <= WRITE_ASK) {
         print_dia(&next_remote_iov_array);
     }
-    
+
     printf("\nPreparing for next step...");
     DIA next_local = init_iovec_array(next_remote_iov_array.size);
-    ssize_t read =
-        read_from_remote_dia(pid, &next_local, &next_remote_iov_array);
 
-    // Uncomment for printing
-    printf("\nPress ENTER to continue... ");
-    print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
+    // // Uncomment for printing
+    // printf("\nPress ENTER to continue... ");
+    // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
 
     search_step_dia(&next_local, &next_remote_iov_array,
                     next_remote_iov_array.size, searched, search_type, file,
@@ -301,7 +358,7 @@ int main(int argc, char** argv) {
     // print_memory_hex_from_dia(&local, &remote,16);
 
     SearchDataType type = TYPE_UINT_32;
-    search_step_dia(&local, &remote, n, NULL, type, file, user_input_pid);
+    first_search_step_dia(&local, &remote, n, NULL, type, file, user_input_pid);
 
     fclose(file);
     return 0;
