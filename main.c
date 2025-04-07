@@ -23,6 +23,8 @@ typedef struct {
     size_t capacity;
 } DIA;
 
+typedef enum { Search, Write, Quit } CMD;
+
 DIA init_iovec_array(size_t initial_capacity) {
     DIA arr;
     arr.size = 0;
@@ -218,20 +220,18 @@ void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
     }
 }
 
+void cmd_loop(DIA* local, DIA* remote, size_t n,
+    void* searched, SearchDataType search_type, FILE* file,
+    pid_t pid);
+
 void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
                      void* searched, SearchDataType search_type, FILE* file,
                      pid_t pid) {
     fprintf(stderr, "\n\n");
-    fprintf(stderr, "DEBUG: search_step_dia called\n");
-    fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
-            search_type);
+    // fprintf(stderr, "DEBUG: search_step_dia called\n");
+    // fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
+    //         search_type);
     print_dia(remote_dia);
-    // If searched not specified already
-    char searched_str[MAX_STR_LEN];
-    printf("\nProvide a searched: ");
-    scanf("%s", searched_str);
-    uint32_t searched_int = strtoul(searched_str, NULL, 10);
-    searched = (void*)&searched_int;
 
     // Create the dia for the next search step
     DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
@@ -241,8 +241,7 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
         case TYPE_UINT_32:
             printf("\nStarting search for TYPE_UINT_32:  %d",
                    *(uint32_t*)searched);
-                   ssize_t read =
-                   read_from_remote_dia(pid, local_dia, remote_dia);
+            ssize_t read = read_from_remote_dia(pid, local_dia, remote_dia);
             search_step_for_uint32_dia(local_dia, remote_dia,
                                        &next_remote_iov_array, len,
                                        (uint32_t*)searched);
@@ -271,67 +270,50 @@ void search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
 
     // Uncomment for printing
     printf("\nPress ENTER to continue... ");
-    print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
-
-    search_step_dia(&next_local, &next_remote_iov_array,
-                    next_remote_iov_array.size, searched, search_type, file,
-                    pid);
-}
-
-void first_search_step_dia(DIA* local_dia, DIA* remote_dia, size_t len,
-                     void* searched, SearchDataType search_type, FILE* file,
-                     pid_t pid) {
-    fprintf(stderr, "DEBUG: search_step_dia called\n");
-    fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
-            search_type);
-    print_dia(remote_dia);
-    // If searched not specified already
-    char searched_str[MAX_STR_LEN];
-    printf("\nProvide a searched: ");
-    scanf("%s", searched_str);
-    uint32_t searched_int = strtoul(searched_str, NULL, 10);
-    searched = (void*)&searched_int;
-
-    // Create the dia for the next search step
-    DIA next_remote_iov_array = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-
-    // Switch on type
-    switch (search_type) {
-        case TYPE_UINT_32:
-            printf("\nStarting search for TYPE_UINT_32:  %d",
-                   *(uint32_t*)searched);
-            search_step_for_uint32_dia(local_dia, remote_dia,
-                                       &next_remote_iov_array, len,
-                                       (uint32_t*)searched);
-            break;
-        default:
-            printf("\nUnknown type");
-    }
-
-    // Now read again only if found something
-    if (next_remote_iov_array.size == 0) {
-        printf("\nNo result for the searched.");
-        // next step use same dias
-        search_step_dia(local_dia, remote_dia, remote_dia->size, searched,
-                        search_type, file, pid);
-    }
-
-    // Present them and ask which to write
-    if (next_remote_iov_array.size <= WRITE_ASK) {
-        print_dia(&next_remote_iov_array);
-    }
-
-    printf("\nPreparing for next step...");
-    DIA next_local = init_iovec_array(next_remote_iov_array.size);
-
-    // // Uncomment for printing
-    // printf("\nPress ENTER to continue... ");
     // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
 
-    search_step_dia(&next_local, &next_remote_iov_array,
+    cmd_loop(&next_local, &next_remote_iov_array,
                     next_remote_iov_array.size, searched, search_type, file,
                     pid);
 }
+
+
+void cmd_loop(DIA* local, DIA* remote, size_t n,
+    void* searched, SearchDataType search_type, FILE* file,
+    pid_t pid) {
+    char cmd[25];
+    while (1) {
+        printf("\n\nMEMMO> ");
+        if (fgets(cmd, sizeof(cmd), stdin) == NULL) {
+            continue; 
+        }
+        // printf("\nInput was: %s", cmd);
+        char cmd_letter = cmd[0];
+        char *rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
+        switch (cmd_letter) {
+            case 's':  // s value
+                printf("\nSearching %s", rest);    // If searched not specified already
+                uint32_t searched_int = strtoul(rest, NULL, 10);
+                searched = (void*)&searched_int;
+                search_step_dia(local, remote, n, searched, search_type, file, pid);
+                break;
+            case 'w':  //w pointer value
+                printf("\nWriting...");
+                break;
+            case 'q':  //quit
+                printf("\nQuitting...");
+                exit(0);
+                break;
+            case 'h':  //quit
+                printf("\ns value_to_search\nw pointer value_to_write\nq quit.");
+                break;
+            default:
+                printf("\nCommand not recognized");
+                break;
+        }
+    }
+}
+
 
 int main(int argc, char** argv) {
     char* p;
@@ -358,7 +340,7 @@ int main(int argc, char** argv) {
     // print_memory_hex_from_dia(&local, &remote,16);
 
     SearchDataType type = TYPE_UINT_32;
-    first_search_step_dia(&local, &remote, n, NULL, type, file, user_input_pid);
+    cmd_loop(&local, &remote,n,NULL,type,file,user_input_pid);
 
     fclose(file);
     return 0;
