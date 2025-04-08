@@ -293,6 +293,17 @@ void cmd_loop(SearchState* sstate) {
         char cmd_letter = cmd[0];
         char* rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
         switch (cmd_letter) {
+            case 'p':  // s value
+                printf("\nPrint Current Search State...");
+                print_dia(sstate->local);
+                print_dia(sstate->remote);
+                if (sstate->next_local != NULL){
+                    print_dia(sstate->next_local);
+                }
+                if (sstate->next_remote != NULL){
+                    print_dia(sstate->next_remote);
+                }
+                break;
             case 's':  // s value
                 printf("\nSearching %s",
                        rest);  // If searched not specified already
@@ -344,8 +355,8 @@ int main(int argc, char** argv) {
 
     SearchDataType type = TYPE_UINT_32;
 
-    DIA * next_remote;
-    DIA * next_local;
+    DIA * next_remote = NULL;
+    DIA * next_local= NULL;
 
     SearchState sstate = {
         local,
