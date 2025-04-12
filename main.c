@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <bits/types/struct_iovec.h>
 #include <stddef.h>
 #define _GNU_SOURCE
 #include <ctype.h>
@@ -163,6 +164,35 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     return nread;
 }
 
+ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
+    
+    ssize_t nwrite = process_vm_writev(pid, ldia->data, ldia->size, rdia->data,
+                                     rdia->size, 0);
+    if (nwrite <= 0) {
+        switch (errno) {
+            case EINVAL:
+                printf("\nERROR: Invalid arguments.");
+                break;
+            case EFAULT:
+                printf("\nERROR: Unable to access target memory.");
+                break;
+            case ENOMEM:
+                printf("\nERROR: Memory allocation failed.");
+                break;
+            case EPERM:
+                printf("\nERROR: Insufficient privileges.");
+                break;
+            case ESRCH:
+                printf("\nERROR: Process does not exist.");
+                break;
+            default:
+                printf("\nERROR: Unknown error occurred.");
+        }
+        return 1;
+    }
+    return nwrite;
+}
+
 int fill_remote_dia(DIA* remote, FILE* file) {
     char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
     unsigned long offset;
@@ -312,7 +342,26 @@ void cmd_loop(SearchState* sstate) {
                 search_step_dia(sstate);
                 break;
             case 'w':  //w pointer value
-                printf("\nWriting...");
+                printf("\nProvide remote pointer: ");
+                char write_ptr_str[25];
+                if (fgets(write_ptr_str, sizeof(write_ptr_str), stdin) == NULL) {
+                    continue;
+                }
+                void * write_ptr;
+                sscanf(write_ptr_str,"%p",&write_ptr);
+                printf("\nProvide value: ");
+                char write_value[25];
+                if (fgets(write_value, sizeof(write_value), stdin) == NULL) {
+                    continue;
+                }
+                uint32_t written_int = strtoul(write_value, NULL, 10);
+                DIA * temp_write = init_iovec_array(1);
+                struct iovec temp = {&written_int,sizeof(written_int)};
+                add_iovec(temp_write, temp);
+                DIA * temp_remote = init_iovec_array(1);
+                struct iovec temp_r= {write_ptr,sizeof(written_int)};
+                add_iovec(temp_remote, temp_r);
+                write_to_remote_dia(sstate->pid, temp_write,temp_remote);
                 break;
             case 'q':  //quit
                 printf("\nQuitting...");
