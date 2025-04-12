@@ -90,8 +90,8 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
             if (val == *searched) {
                 // printf("\nFound  %d at %p in local, region number %d",
                 //        *searched, p + i, n_regions);
-                printf("\nFound  %d at %p in remote, region number %d",
-                       *searched, p_remote + i, n_regions);
+                // printf("\nFound  %d at %p in remote, region number %d",
+                //        *searched, p_remote + i, n_regions);
 
                 // I now fill the next remote iovec so that it will be used to
                 // get and read the data for the next
@@ -136,6 +136,11 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
+    // printf("\nReading from %d",pid);
+    // printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
+    // printf("\nPress for printing the dia");
+    // getchar();
+    // print_dia(rdia);
 
     ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
                                      rdia->size, 0);
@@ -263,13 +268,40 @@ void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
 
 void cmd_loop(SearchState *sstate);
 
+void advance_state(SearchState *sstate){
+    // Free the remote and the local
+    // Advance
+    // printf("\nReplacing the current local ");
+    // print_dia(sstate->local);
+    // printf("\nWith the next  local ");
+    // print_dia(sstate->next_local);
+    // printf("\nReplacing the current remote ");
+    // print_dia(sstate->remote);
+    // printf("\nWith the next  remote ");
+    // print_dia(sstate->next_remote);
+
+    sstate->local = sstate->next_local;
+    sstate->remote = sstate->next_remote;
+    sstate->next_remote = NULL;
+    sstate->next_local = NULL;
+}
+
 void search_step_dia(SearchState *sstate) {
+    // Takes in a state with remote filled.
+    // local is init but no iovecs,
+    // the remotes are null.
+    //
+    // Init the next_remote.
+    // read from remote to local.
+    // search on the local and update the next remote
+    // create the next local
+    // advance state
 
     fprintf(stderr, "\n\n");
     // fprintf(stderr, "DEBUG: search_step_dia called\n");
     // fprintf(stderr, "PID: %d, len: %zu, search_type: %d\n", pid, len,
     //         search_type);
-    print_dia(sstate->remote);
+    // print_dia(sstate->remote);
 
     // Create the dia for the next search step
     sstate->next_remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
@@ -288,26 +320,28 @@ void search_step_dia(SearchState *sstate) {
             printf("\nUnknown type");
     }
 
-    // Now read again only if found something
+    // If not found anything go to next step
     if (sstate->next_remote->size == 0) {
         printf("\nNo result for the searched.");
-        // next step use same dias
-        search_step_dia(sstate);
+        cmd_loop(sstate);
     }
 
-    // Present them and ask which to write
-    if (sstate->next_remote->size <= WRITE_ASK) {
-        print_dia(sstate->next_remote);
-    }
+    // // Present them and ask which to write
+    // if (sstate->next_remote->size <= WRITE_ASK) {
+    //     print_dia(sstate->next_remote);
+    //     getchar();
+    // }
 
     printf("\nPreparing for next step...");
     sstate->next_local = init_iovec_array(sstate->next_remote->size);
-    ssize_t read =
-        read_from_remote_dia(sstate->pid, sstate->next_local, sstate->next_remote);
+    // ssize_t read =
+    //     read_from_remote_dia(sstate->pid, sstate->next_local, sstate->next_remote);
 
     // Uncomment for printing
-    printf("\nPress ENTER to continue... ");
+    // print_dia(sstate->next_remote);
+    
     // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
+    advance_state(sstate);
 
     cmd_loop(sstate);
 }
@@ -325,7 +359,9 @@ void cmd_loop(SearchState* sstate) {
         switch (cmd_letter) {
             case 'p':  // s value
                 printf("\nPrint Current Search State...");
+                printf("\nPrint Local...");
                 print_dia(sstate->local);
+                printf("\nPrint Remote...");
                 print_dia(sstate->remote);
                 if (sstate->next_local != NULL){
                     print_dia(sstate->next_local);
@@ -391,11 +427,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     // Create the two iovec for local and remote
-    DIA * remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-    int n = fill_remote_dia(remote, file);
-    DIA * local = init_iovec_array(n);
-    ssize_t nread = read_from_remote_dia(user_input_pid, local, remote);
-    printf("\nRead %zd bytes from %d regions.", nread, n);
+
+    // ssize_t nread = read_from_remote_dia(user_input_pid, local, remote);
+    // printf("\nRead %zd bytes from %d regions.", nread, n);
 
     // Uncomment for printing
     // printf("\nPress ENTER to continue... ");
@@ -403,7 +437,9 @@ int main(int argc, char** argv) {
     // print_memory_hex_from_dia(&local, &remote,16);
 
     SearchDataType type = TYPE_UINT_32;
-
+    DIA * remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    int n = fill_remote_dia(remote, file);
+    DIA * local = init_iovec_array(n);
     DIA * next_remote = NULL;
     DIA * next_local= NULL;
 
