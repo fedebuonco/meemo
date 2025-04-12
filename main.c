@@ -136,11 +136,11 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
-    // printf("\nReading from %d",pid);
-    // printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
-    // printf("\nPress for printing the dia");
-    // getchar();
-    // print_dia(rdia);
+    printf("\nReading from %d",pid);
+    printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
+    printf("\nPress for printing the dia");
+    getchar();
+    print_dia(rdia);
 
     ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
                                      rdia->size, 0);
@@ -370,13 +370,14 @@ void cmd_loop(SearchState* sstate) {
                     print_dia(sstate->next_remote);
                 }
                 break;
-            case 's':  // s value
-                printf("\nSearching %s",
+                case 's':
+                    printf("\nSearching %s",
                        rest);  // If searched not specified already
-                uint32_t searched_int = strtoul(rest, NULL, 10);
-                sstate->searched = (void*)&searched_int;
-                search_step_dia(sstate);
-                break;
+                    uint32_t *searched_ptr = malloc(sizeof(uint32_t));
+                       *searched_ptr = strtoul(rest, NULL, 10);
+                       sstate->searched = searched_ptr;
+                       search_step_dia(sstate);
+                       break;
             case 'w':  //w pointer value
                 printf("\nProvide remote pointer: ");
                 char write_ptr_str[25];
