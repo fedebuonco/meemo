@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <bits/posix1_lim.h>
 #include <bits/types/struct_iovec.h>
 #include <stddef.h>
 #define _GNU_SOURCE
@@ -17,6 +18,14 @@
 #define MAX_STR_LEN 500
 #define INITIAL_IOVEC_ARRAY_CAP 128
 #define WRITE_ASK 10
+#define DEBUG_LEVEL 4  // 0=NONE, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG
+
+#define LOG_ERROR   1
+#define LOG_WARN    2
+#define LOG_INFO    3
+#define LOG_DEBUG   4
+
+#define DEBUG_PRINT(level, x) do { if ((level) <= DEBUG_LEVEL) printf x; } while (0)
 
 typedef struct {
     struct iovec* data;
@@ -94,8 +103,8 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
              i <= local->data[n_regions].iov_len - sizeof(uint32_t); i++) {
             uint32_t val;
             memcpy(&val, p + i, sizeof(uint32_t));  // Safe memory access
-            // printf("\nComparing %d with %d at \nLOCAL: %p and at  REMOTE %p", *searched, val, p+i, p_remote + i );
             if (val == *searched) {
+                // DEBUG_PRINT(LOG_DEBUG, ("\nComparing %d with %d at \nLOCAL: %p and at  REMOTE %p", *searched, val, p+i, p_remote + i ));
                 // printf("\nFound  %d at %p in local, region number %d",
                 //        *searched, p + i, n_regions);
                 // printf("\nFound  %d at %p in remote, region number %d",
@@ -144,12 +153,17 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
-    // printf("\nReading from %d",pid);
-    // printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
-    // printf("\nPress for printing the dia");
-    // getchar();
-    // print_dia(rdia);
 
+    DEBUG_PRINT(LOG_DEBUG, ("\nReading from PID: %d",pid));
+    DEBUG_PRINT(LOG_DEBUG, ("\nReading from regions: %zu into regions:%zu",rdia->size, ldia->size));
+    size_t total_iov_len_remote = 0;
+    size_t total_iov_len_local = 0;
+    for(size_t i = 0; i < rdia->size ; i++){
+        total_iov_len_remote+=rdia->data[i].iov_len;
+        total_iov_len_local+=ldia->data[i].iov_len;
+    }
+    
+    DEBUG_PRINT(LOG_DEBUG, ("\ntotal_iov_len_remote: %zu and total_iov_len_local: %zu",total_iov_len_remote, total_iov_len_local));
     ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
                                      rdia->size, 0);
     if (nread <= 0) {
@@ -288,8 +302,21 @@ void advance_state(SearchState* sstate) {
     // printf("\nWith the next  remote ");
     // print_dia(sstate->next_remote);
 
-    sstate->local = sstate->next_local;
+    free_iovec_array(sstate->remote);
+    free_iovec_array(sstate->local);
+
     sstate->remote = sstate->next_remote;
+    sstate->local =  init_iovec_array(sstate->remote->size);
+
+    sstate->next_remote = NULL;
+    sstate->next_local = NULL;
+}
+
+void reset_current_state(SearchState* sstate) {
+    free_iovec_array(sstate->local);
+
+    sstate->local =  init_iovec_array(sstate->remote->size);
+    
     sstate->next_remote = NULL;
     sstate->next_local = NULL;
 }
@@ -332,6 +359,7 @@ void search_step_dia(SearchState* sstate) {
     // If not found anything go to next step
     if (sstate->next_remote->size == 0) {
         printf("\nNo result for the searched.");
+        reset_current_state(sstate);
         cmd_loop(sstate);
     }
 
@@ -342,7 +370,6 @@ void search_step_dia(SearchState* sstate) {
     // }
 
     printf("\nPreparing for next step...");
-    sstate->next_local = init_iovec_array(sstate->next_remote->size);
     // ssize_t read =
     //     read_from_remote_dia(sstate->pid, sstate->next_local, sstate->next_remote);
 
@@ -350,8 +377,8 @@ void search_step_dia(SearchState* sstate) {
     // print_dia(sstate->next_remote);
 
     // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
-    advance_state(sstate);
 
+    advance_state(sstate);
     cmd_loop(sstate);
 }
 
@@ -464,12 +491,12 @@ int main(int argc, char** argv) {
     DIA* next_remote = NULL;
     DIA* next_local = NULL;
 
-    SearchState sstate = {
+    SearchState initial_sstate = {
         local, remote, next_local,     next_remote,
         type,  NULL,   user_input_pid, file,
     };
 
-    cmd_loop(&sstate);
+    cmd_loop(&initial_sstate);
 
     fclose(file);
     return 0;

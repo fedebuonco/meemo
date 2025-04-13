@@ -3,7 +3,10 @@
 
 
 # IN PROGRESS
-# Add write
+# Work around limitation of the iovec.
+        Max iovec is 1024 so cannot used to store values
+        need to use custom data structure and do not use scattergather
+        
 
 
 # DONE
