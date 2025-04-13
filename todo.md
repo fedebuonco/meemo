@@ -5,7 +5,9 @@
 # IN PROGRESS
 # Work around limitation of the iovec.
         Max iovec is 1024 so cannot used to store values
-        need to use custom data structure and do not use scattergather
+        need to use custom data structure and use scatter gather always requesting the all regions
+        and save the address on this struct.
+        
         
 
 
