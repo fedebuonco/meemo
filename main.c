@@ -26,8 +26,8 @@ typedef struct {
 
 typedef enum { Search, Write, Quit } CMD;
 
-DIA * init_iovec_array(size_t initial_capacity) {
-    DIA * arr = malloc(sizeof(DIA));
+DIA* init_iovec_array(size_t initial_capacity) {
+    DIA* arr = malloc(sizeof(DIA));
     arr->size = 0;
     arr->capacity = initial_capacity;
     arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
@@ -65,11 +65,19 @@ void print_iovec(const struct iovec* io) {
     printf("\tLen: %d", (int)io->iov_len);
 }
 
-void print_dia(const DIA* arr) {
+void print_dia(const DIA* arr, size_t max_elem) {
+    // if (arr == NULL || arr->data == NULL) {
+    //     printf("\nEmpty");
+    //     return;
+    // }
     printf("\nDIA of %d Elements", (int)arr->size);
-    for (int i = 0; i < arr->size; i++) {  // Fixed off-by-one error
+    size_t min = max_elem <= arr->size ? max_elem : arr->size;
+    for (int i = 0; i < min; i++) {  // Fixed off-by-one error
         printf("\n[%d] = ", i);
         print_iovec(&arr->data[i]);
+    }
+    if (min < arr->size) {
+        printf("\nAnd other %zu Elements", (int)arr->size - min);
     }
 }
 
@@ -113,10 +121,10 @@ typedef enum {
 } SearchDataType;
 
 typedef struct {
-    DIA * local;
-    DIA * remote;
-    DIA * next_local;
-    DIA * next_remote;
+    DIA* local;
+    DIA* remote;
+    DIA* next_local;
+    DIA* next_remote;
     SearchDataType type;
     void* searched;
     pid_t pid;
@@ -136,11 +144,11 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
-    printf("\nReading from %d",pid);
-    printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
-    printf("\nPress for printing the dia");
-    getchar();
-    print_dia(rdia);
+    // printf("\nReading from %d",pid);
+    // printf("\nReading for n  %zu into %zu",rdia->size, ldia->size);
+    // printf("\nPress for printing the dia");
+    // getchar();
+    // print_dia(rdia);
 
     ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
                                      rdia->size, 0);
@@ -170,9 +178,9 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 }
 
 ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
-    
+
     ssize_t nwrite = process_vm_writev(pid, ldia->data, ldia->size, rdia->data,
-                                     rdia->size, 0);
+                                       rdia->size, 0);
     if (nwrite <= 0) {
         switch (errno) {
             case EINVAL:
@@ -266,9 +274,9 @@ void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
     }
 }
 
-void cmd_loop(SearchState *sstate);
+void cmd_loop(SearchState* sstate);
 
-void advance_state(SearchState *sstate){
+void advance_state(SearchState* sstate) {
     // Free the remote and the local
     // Advance
     // printf("\nReplacing the current local ");
@@ -286,7 +294,7 @@ void advance_state(SearchState *sstate){
     sstate->next_local = NULL;
 }
 
-void search_step_dia(SearchState *sstate) {
+void search_step_dia(SearchState* sstate) {
     // Takes in a state with remote filled.
     // local is init but no iovecs,
     // the remotes are null.
@@ -311,10 +319,11 @@ void search_step_dia(SearchState *sstate) {
         case TYPE_UINT_32:
             printf("\nStarting search for TYPE_UINT_32:  %d",
                    *(uint32_t*)sstate->searched);
-            ssize_t read = read_from_remote_dia(sstate->pid, sstate->local, sstate->remote);
-            search_step_for_uint32_dia(sstate->local, sstate->remote,
-                                       sstate->next_remote, sstate->remote->size,
-                                       (uint32_t*)sstate->searched);
+            ssize_t read = read_from_remote_dia(sstate->pid, sstate->local,
+                                                sstate->remote);
+            search_step_for_uint32_dia(
+                sstate->local, sstate->remote, sstate->next_remote,
+                sstate->remote->size, (uint32_t*)sstate->searched);
             break;
         default:
             printf("\nUnknown type");
@@ -339,11 +348,31 @@ void search_step_dia(SearchState *sstate) {
 
     // Uncomment for printing
     // print_dia(sstate->next_remote);
-    
+
     // print_memory_hex_from_dia(&next_local, &next_remote_iov_array, 16);
     advance_state(sstate);
 
     cmd_loop(sstate);
+}
+
+void print_search_state(SearchState* sstate) {
+    printf("\nCurrent Search State: ");
+    printf("\nRemote has currently size of %zu", sstate->remote->size);
+    printf("\nPrint Remote...");
+    print_dia(sstate->remote, 10);
+    printf("\nLocal has currently size of %zu", sstate->local->size);
+    printf("\nPrint Local...");
+    print_dia(sstate->local, 10);
+    if (sstate->next_remote != NULL) {
+        printf("\nPrint Next Remote...");
+        print_dia(sstate->next_remote, 10);
+    }
+    if (sstate->next_local != NULL) {
+        printf("\nPrint Next Local...");
+        print_dia(sstate->next_local, 10);
+    }
+    printf("\nThe searched is %d", *(int*)sstate->searched);
+    printf("\nEnd of Search State.");
 }
 
 void cmd_loop(SearchState* sstate) {
@@ -358,47 +387,38 @@ void cmd_loop(SearchState* sstate) {
         char* rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
         switch (cmd_letter) {
             case 'p':  // s value
-                printf("\nPrint Current Search State...");
-                printf("\nPrint Local...");
-                print_dia(sstate->local);
-                printf("\nPrint Remote...");
-                print_dia(sstate->remote);
-                if (sstate->next_local != NULL){
-                    print_dia(sstate->next_local);
-                }
-                if (sstate->next_remote != NULL){
-                    print_dia(sstate->next_remote);
-                }
+                print_search_state(sstate);
                 break;
-                case 's':
-                    printf("\nSearching %s",
+            case 's':
+                printf("\nSearching %s",
                        rest);  // If searched not specified already
-                    uint32_t *searched_ptr = malloc(sizeof(uint32_t));
-                       *searched_ptr = strtoul(rest, NULL, 10);
-                       sstate->searched = searched_ptr;
-                       search_step_dia(sstate);
-                       break;
+                uint32_t* searched_ptr = malloc(sizeof(uint32_t));
+                *searched_ptr = strtoul(rest, NULL, 10);
+                sstate->searched = searched_ptr;
+                search_step_dia(sstate);
+                break;
             case 'w':  //w pointer value
                 printf("\nProvide remote pointer: ");
                 char write_ptr_str[25];
-                if (fgets(write_ptr_str, sizeof(write_ptr_str), stdin) == NULL) {
+                if (fgets(write_ptr_str, sizeof(write_ptr_str), stdin) ==
+                    NULL) {
                     continue;
                 }
-                void * write_ptr;
-                sscanf(write_ptr_str,"%p",&write_ptr);
+                void* write_ptr;
+                sscanf(write_ptr_str, "%p", &write_ptr);
                 printf("\nProvide value: ");
                 char write_value[25];
                 if (fgets(write_value, sizeof(write_value), stdin) == NULL) {
                     continue;
                 }
                 uint32_t written_int = strtoul(write_value, NULL, 10);
-                DIA * temp_write = init_iovec_array(1);
-                struct iovec temp = {&written_int,sizeof(written_int)};
+                DIA* temp_write = init_iovec_array(1);
+                struct iovec temp = {&written_int, sizeof(written_int)};
                 add_iovec(temp_write, temp);
-                DIA * temp_remote = init_iovec_array(1);
-                struct iovec temp_r= {write_ptr,sizeof(written_int)};
+                DIA* temp_remote = init_iovec_array(1);
+                struct iovec temp_r = {write_ptr, sizeof(written_int)};
                 add_iovec(temp_remote, temp_r);
-                write_to_remote_dia(sstate->pid, temp_write,temp_remote);
+                write_to_remote_dia(sstate->pid, temp_write, temp_remote);
                 break;
             case 'q':  //quit
                 printf("\nQuitting...");
@@ -438,21 +458,15 @@ int main(int argc, char** argv) {
     // print_memory_hex_from_dia(&local, &remote,16);
 
     SearchDataType type = TYPE_UINT_32;
-    DIA * remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
     int n = fill_remote_dia(remote, file);
-    DIA * local = init_iovec_array(n);
-    DIA * next_remote = NULL;
-    DIA * next_local= NULL;
+    DIA* local = init_iovec_array(n);
+    DIA* next_remote = NULL;
+    DIA* next_local = NULL;
 
     SearchState sstate = {
-        local,
-        remote,
-        next_local,
-        next_remote,
-        type,
-        NULL,
-        user_input_pid,
-        file,    
+        local, remote, next_local,     next_remote,
+        type,  NULL,   user_input_pid, file,
     };
 
     cmd_loop(&sstate);
