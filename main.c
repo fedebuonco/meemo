@@ -3,6 +3,7 @@
 #include <bits/types/struct_iovec.h>
 #include <stddef.h>
 #define _GNU_SOURCE
+#include <sys/uio.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,13 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/uio.h>
 #include <unistd.h>
 
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
 #define INITIAL_IOVEC_ARRAY_CAP 128
 #define WRITE_ASK 10
+#define IOV_MAX_BATCH 1024
+
 #define DEBUG_LEVEL 4  // 0=NONE, 1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG
 
 #define LOG_ERROR   1
@@ -121,6 +123,40 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
     }
 }
 
+
+
+ssize_t batch_process_vm_readv(pid_t pid, struct iovec *liovec, size_t ln, struct iovec *riovec, size_t rn) {
+    ssize_t total_read = 0;
+    size_t offset = 0;
+
+    while (offset < ln && offset < rn) {
+        size_t batch = (ln - offset < IOV_MAX_BATCH) ? (ln - offset) : IOV_MAX_BATCH;
+        if (rn - offset < batch) batch = rn - offset;
+
+        printf("Reading batch: offset=%zu, batch=%zu\n", offset, batch);
+
+        ssize_t nread = process_vm_readv(
+            pid,
+            liovec + offset, batch,
+            riovec + offset, batch,
+            0
+        );
+
+        if (nread == -1) {
+            fprintf(stderr, "process_vm_readv failed at offset %zu: %s\n", offset, strerror(errno));
+            break;
+        }
+
+        printf("Bytes read in batch: %zd\n", nread);
+        total_read += nread;
+        offset += batch;
+    }
+
+    printf("Total bytes read: %zd\n", total_read);
+    return total_read;
+}
+
+
 typedef enum {
     TYPE_INT_32,
     TYPE_INT_64,
@@ -164,8 +200,12 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     }
     
     DEBUG_PRINT(LOG_DEBUG, ("\ntotal_iov_len_remote: %zu and total_iov_len_local: %zu",total_iov_len_remote, total_iov_len_local));
-    ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
-                                     rdia->size, 0);
+
+    ssize_t nread = batch_process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
+        rdia->size);
+    
+    // ssize_t nread = process_vm_readv(pid, ldia->data, ldia->size, rdia->data,
+    //                                  rdia->size, 0);
     if (nread <= 0) {
         switch (errno) {
             case EINVAL:
