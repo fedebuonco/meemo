@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define MAX_LINES 500
@@ -171,6 +172,7 @@ typedef struct {
     void* searched;
     pid_t pid;
     FILE* file;
+    int search_cnt;
 } SearchState;
 
 ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
@@ -239,8 +241,8 @@ int fill_remote_dia(DIA* remote, FILE* file) {
     char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
     int dev_major, dev_minor, inode;
     unsigned long offset;
-    
-    uint64_t total_bytes =0;
+
+    uint64_t total_bytes = 0;
     int i = 0;
 
     while (i < MAX_LINES &&
@@ -260,7 +262,7 @@ int fill_remote_dia(DIA* remote, FILE* file) {
         struct iovec temp;
         temp.iov_base = (void*)start;
         temp.iov_len = end - start;
-        total_bytes+=temp.iov_len;
+        total_bytes += temp.iov_len;
         add_iovec(remote, temp);
 
         i++;
@@ -364,12 +366,12 @@ void search_step_dia(SearchState* sstate) {
     if (sstate->next_remote->size == 0) {
         printf("\nNo result for the searched.");
         reset_current_state(sstate);
-        cmd_loop(sstate);
+        return;
     } else {
         printf("\nFound %zu Results. Going to next Step...",
                sstate->next_remote->size);
         advance_state(sstate);
-        cmd_loop(sstate);
+        return;
     }
 
     //print_memory_hex_from_dia(sstate->next_local, sstate->next_remote, 16);
@@ -381,7 +383,7 @@ void print_search_state(SearchState* sstate, int log_level) {
     DEBUG_PRINT(log_level, ("\nPrint Remote..."));
     print_dia(sstate->remote, 10);
 
-    if(sstate->local->size != 0){
+    if (sstate->local->size != 0) {
         DEBUG_PRINT(log_level,
                     ("\nLocal has currently size of %zu", sstate->local->size));
         DEBUG_PRINT(log_level, ("\nPrint Local..."));
@@ -401,15 +403,16 @@ void print_search_state(SearchState* sstate, int log_level) {
     DEBUG_PRINT(log_level, ("\nThe searched is %d", *(int*)sstate->searched));
 }
 
-void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value){
-    if (pos >= sstate->remote->size){
-        DEBUG_PRINT(LOG_ERROR, ("Wrong Position, the size of remote is %zu", sstate->remote->size));
+void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
+    if (pos >= sstate->remote->size) {
+        DEBUG_PRINT(LOG_ERROR, ("Wrong Position, the size of remote is %zu",
+                                sstate->remote->size));
         return;
     }
 
-    void * write_ptr = sstate->remote->data[pos].iov_base;
-    printf("\nWriting at %p ...",write_ptr);
-    
+    void* write_ptr = sstate->remote->data[pos].iov_base;
+    printf("\nWriting at %p ...", write_ptr);
+
     DIA* temp_write = init_iovec_array(1);
     struct iovec temp = {&value, sizeof(value)};
     add_iovec(temp_write, temp);
@@ -421,7 +424,6 @@ void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value){
     write_to_remote_dia(sstate->pid, temp_write, temp_remote);
 }
 
-
 /*Main command loop, parses the various subcommands and then dispatch.*/
 void cmd_loop(SearchState* sstate) {
     char cmd[25];
@@ -430,34 +432,47 @@ void cmd_loop(SearchState* sstate) {
         if (fgets(cmd, sizeof(cmd), stdin) == NULL) {
             continue;
         }
-        printf("\033[2J\033[H"); // Clear screen + move cursor to home
+        printf("\033[2J\033[H");  // Clear screen + move cursor to home
         // printf("\nInput was: %s", cmd);
         char cmd_letter = cmd[0];
         char* rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
         switch (cmd_letter) {
             case 'p':  // s value
+                if (sstate->search_cnt == 0) {
+                    DEBUG_PRINT(
+                        LOG_ERROR,
+                        ("Cannot print state if search has not been perfomed "
+                         "once.\nPerform at least one search."));
+                    continue;
+                }
                 print_search_state(sstate, LOG_WARN);
                 break;
             case 's':
-                printf("\nSearching %s", rest);  // If searched not specified already
+                printf("\nSearching %s",
+                       rest);  // If searched not specified already
                 int32_t search_value;
-                if (sscanf( rest,"%d", &search_value) != 1){
-                    DEBUG_PRINT(LOG_ERROR,("\nWrong formatting. Should be s <value>"));
+                if (sscanf(rest, "%d", &search_value) != 1) {
+                    DEBUG_PRINT(LOG_ERROR,
+                                ("\nWrong formatting. Should be s <value>"));
                     continue;
                 }
                 sstate->searched = &search_value;
                 search_step_dia(sstate);
+                sstate->search_cnt++;
                 break;
             case 'w':  //w pointer value
                 printf("\nWriting...");
                 size_t pos;
                 int32_t value;
-                if (sscanf( rest,"%zu %d", &pos, &value) != 2){
-                    DEBUG_PRINT(LOG_ERROR,("\nWrong formatting. Should be w <pos> <value>"));
+                if (sscanf(rest, "%zu %d", &pos, &value) != 2) {
+                    DEBUG_PRINT(
+                        LOG_ERROR,
+                        ("\nWrong formatting. Should be w <pos> <value>"));
                     continue;
                 }
-                DEBUG_PRINT(LOG_DEBUG,("\nWriting at pos %zu the value: %d",pos,value));
-                write_value_at_pos(sstate,pos,value);
+                DEBUG_PRINT(LOG_DEBUG,
+                            ("\nWriting at pos %zu the value: %d", pos, value));
+                write_value_at_pos(sstate, pos, value);
                 break;
             case 'q':  //quit
                 printf("\nQuitting...");
@@ -480,34 +495,29 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    char* endp;
-    pid_t user_input_pid = (pid_t)strtol(argv[1], &endp, 10);
-    if (endp == argv[1]) {
-        printf("\nInvalid PID found.");
-        exit(1);
-    } else if (*endp != '\0') {
-        printf("\nInvalid character: %c", *endp);
-    } else {
-        printf("\nInput PID = %d", user_input_pid);
+    // Parse and validate PID
+    pid_t user_input_pid;
+    if (sscanf(argv[1], "%d", &user_input_pid) != 1) {
+        printf("\nInvalid PID input.");
+        return 1;
     }
+    if (user_input_pid <= 0) {
+        printf("\nInvalid PID value.");
+        return 1;
+    }
+    printf("\nInput PID = %d", user_input_pid);
 
+    // Read maps of process
     char path[50];
     sprintf(path, "/proc/%d/maps", user_input_pid);
-    DEBUG_PRINT(LOG_INFO,("\nOpening %s ...", path));
+    DEBUG_PRINT(LOG_INFO, ("\nOpening %s ...", path));
     FILE* file = fopen(path, "r");
     if (!file) {
         perror("Error opening file");
         return 1;
     }
-    // Create the two iovec for local and remote
 
-    // ssize_t nread = read_from_remote_dia(user_input_pid, local, remote);
-    // printf("\nRead %zd bytes from %d regions.", nread, n);
-
-    // Uncomment for printing
-    // printf("\nPress ENTER to continue... ");
-    // getchar();
-
+    // Setup initial Search State
     SearchDataType type = TYPE_UINT_32;
     DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
     int n = fill_remote_dia(remote, file);
@@ -515,11 +525,11 @@ int main(int argc, char** argv) {
     DIA* next_remote = NULL;
     DIA* next_local = NULL;
 
-    SearchState initial_sstate = {
-        local, remote, next_local,     next_remote,
-        type,  NULL,   user_input_pid, file,
-    };
+    SearchState initial_sstate = {local,          remote, next_local,
+                                  next_remote,    type,   NULL,
+                                  user_input_pid, file,   0};
 
+    // Main CMD loop
     cmd_loop(&initial_sstate);
 
     fclose(file);
