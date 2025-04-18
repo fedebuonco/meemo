@@ -3,6 +3,29 @@
 
 
 # IN PROGRESS
+## from cmd loop to cmd as shortcut and to always display scrollable search state
+## Double Buffering for avoiding flickering on terminal
+## Side bar with current search state
+
+
+
+# DONE
+# Work around limitation of the iovec.
+        Max iovec is 1024 so cannot used to store values
+        need to use custom data structure and use scatter gather always requesting the all regions
+        and save the address on this struct.
+        
+## Implement search structure for repetitive searches pass it to cmdloop everytime
+## Implement easy read where dia for local is correctly init and returned
+## ## create simple command line parser 
+        s something
+        w pointer something
+        q quit
+## Read Memory of victim
+## Search ui32
+
+
+## Suggested by AI
 High Priority (Critical Issues)
 
 Fix memory leaks in error paths (particularly in read_from_remote_dia())
@@ -36,19 +59,3 @@ Add thread safety if the code might be used in multi-threaded environments
 Implement defensive checks for null pointers throughout the code
 Consider security implications of cross-process memory access
 Add unit tests for critical functions
-
-
-# DONE
-# Work around limitation of the iovec.
-        Max iovec is 1024 so cannot used to store values
-        need to use custom data structure and use scatter gather always requesting the all regions
-        and save the address on this struct.
-        
-## Implement search structure for repetitive searches pass it to cmdloop everytime
-## Implement easy read where dia for local is correctly init and returned
-## ## create simple command line parser 
-        s something
-        w pointer something
-        q quit
-## Read Memory of victim
-## Search ui32

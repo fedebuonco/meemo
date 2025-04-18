@@ -6,10 +6,12 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <termios.h>
@@ -34,6 +36,67 @@
             printf x;               \
     } while (0)
 
+/* Terminal */
+
+struct winsize ws;
+struct sigaction sa;
+
+void enable_raw_mode() {
+    struct termios raw;
+    tcgetattr(STDIN_FILENO, &raw);
+    raw.c_lflag &= ~(ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void update_terminal_size() {
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
+        exit(1);
+    }
+}
+
+static void sigwinchHandler(int sig) {
+    // TODO
+    // Clear and rewrite current buffer?
+    update_terminal_size();
+    printf(
+        "Caught SIGWINCH, new window size: "
+        "%d rows * %d columns\n",
+        ws.ws_row, ws.ws_col);
+}
+
+#define CLEAR_SCREEN "\033[2J"
+#define MOVE_CURSOR(row, col) printf("\033[%d;%dH", (row), (col))
+#define HIDE_CURSOR "\033[?25l"
+#define SHOW_CURSOR "\033[?25h"
+
+void draw_header() {
+    MOVE_CURSOR(1, 1);
+    for (int i = 0; i < ws.ws_col; ++i)
+        putchar('=');
+    MOVE_CURSOR(1, (ws.ws_col - 14) / 2);  // Center text
+    printf("== Simple TUI ==");
+}
+void draw_footer() {
+    // Footer
+    MOVE_CURSOR(ws.ws_row, 1);
+    for (int i = 0; i < ws.ws_col; ++i)
+        putchar('=');
+    MOVE_CURSOR(ws.ws_row, 2);
+    printf("Press 3 to exit");
+}
+/* Create the current buffer by adding he header, content, footer*/
+void draw() {
+    update_terminal_size();
+    // Here allocate for the current terminal size
+    void * step_buffer;
+    add_header(step_buffer);
+    add_content(step_buffer);
+    add_footer(step_buffer);
+
+    draw_buffer(step_buffer);
+}
+
+/* Dynamic Iovec Array */
 typedef struct {
     struct iovec* data;
     size_t size;
@@ -495,6 +558,13 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sa.sa_handler = sigwinchHandler;
+    if (sigaction(SIGWINCH, &sa, NULL) == -1) {
+        exit(1);
+    }
+
     // Parse and validate PID
     pid_t user_input_pid;
     if (sscanf(argv[1], "%d", &user_input_pid) != 1) {
@@ -529,8 +599,16 @@ int main(int argc, char** argv) {
                                   next_remote,    type,   NULL,
                                   user_input_pid, file,   0};
 
-    // Main CMD loop
-    cmd_loop(&initial_sstate);
+    // Main Render loop
+    enable_raw_mode();
+    while (1) {
+        CLEAR_SCREEN;
+        draw();
+        // get_input();
+        usleep(10000); //TODO find acceptable refresh rate
+    }
+    // // Main CMD loop
+    // cmd_loop(&initial_sstate);
 
     fclose(file);
     return 0;
