@@ -47,21 +47,11 @@ void enable_raw_mode() {
     raw.c_lflag &= ~(ECHO);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
-
+void draw();
 void update_terminal_size() {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
         exit(1);
     }
-}
-
-static void sigwinchHandler(int sig) {
-    // TODO
-    // Clear and rewrite current buffer?
-    update_terminal_size();
-    printf(
-        "Caught SIGWINCH, new window size: "
-        "%d rows * %d columns\n",
-        ws.ws_row, ws.ws_col);
 }
 
 #define CLEAR_SCREEN "\033[2J"
@@ -69,31 +59,96 @@ static void sigwinchHandler(int sig) {
 #define HIDE_CURSOR "\033[?25l"
 #define SHOW_CURSOR "\033[?25h"
 
-void draw_header() {
-    MOVE_CURSOR(1, 1);
-    for (int i = 0; i < ws.ws_col; ++i)
-        putchar('=');
-    MOVE_CURSOR(1, (ws.ws_col - 14) / 2);  // Center text
-    printf("== Simple TUI ==");
-}
-void draw_footer() {
-    // Footer
-    MOVE_CURSOR(ws.ws_row, 1);
-    for (int i = 0; i < ws.ws_col; ++i)
-        putchar('=');
-    MOVE_CURSOR(ws.ws_row, 2);
-    printf("Press 3 to exit");
-}
-/* Create the current buffer by adding he header, content, footer*/
-void draw() {
-    update_terminal_size();
-    // Here allocate for the current terminal size
-    void * step_buffer;
-    add_header(step_buffer);
-    add_content(step_buffer);
-    add_footer(step_buffer);
+typedef struct {
+    int width;
+    int height;
+    char* front;
+    char* back;
+} FrameBuffer;
 
-    draw_buffer(step_buffer);
+FrameBuffer init_fb(int width, int height) {
+    FrameBuffer fb;
+    fb.width = width;
+    fb.height = height;
+    size_t size = fb.width * fb.height;
+    fb.front = calloc(size, sizeof(char));
+    fb.back = calloc(size, sizeof(char));
+    return fb;
+}
+
+/* Put the char in back buffer at (x,y) so that at draw time it will only be displayed if != front*/
+void fb_putchar(FrameBuffer* fb, int x, int y, char ch) {
+    if (x < 0 || x >= fb->width || y < 0 || y >= fb->height)
+        return;
+    fb->back[y * fb->width + x] = ch;
+}
+
+void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
+    int cx = x;
+    int cy = y;
+
+    while (*str) {
+        if (*str == '\n') {
+            cx = x;  // Reset to initial column
+            cy++;    // Move to next row
+        } else {
+            fb_putchar(fb, cx, cy, *str);
+            cx++;
+            if (cx >= fb->width) {  // Wrap line if needed
+                cx = x;
+                cy++;
+            }
+        }
+
+        if (cy >= fb->height)
+            break;
+        str++;
+    }
+}
+
+/* Draw only the char that are different from front.*/
+void fb_swap(FrameBuffer* fb) {
+    for (int i = 0; i < fb->width * fb->height; ++i) {
+        if (fb->front[i] != fb->back[i]) {
+            int x = i % fb->width;
+            int y = i / fb->width;
+            printf("\033[%d;%dH%c", y + 1, x + 1, fb->back[i]);
+            fb->front[i] = fb->back[i];
+        }
+    }
+    fflush(stdout);
+}
+
+void add_header(FrameBuffer* fb) {
+    static const char* title = "Meemo 0.0.1 ";
+    int i = 0;
+    for (; i < strlen(title); ++i) {
+        fb_putchar(fb, i, 0, title[i]);
+    }
+    for (; i < fb->width; ++i) {
+        fb_putchar(fb, i, 0, '=');
+    }
+}
+
+void add_footer(FrameBuffer* fb) {
+    static const char* cmds = " s: search | p: print | w: write | q: quit ";
+    int i = 0;
+    for (; i < strlen(cmds); i++) {
+        fb_putchar(fb, i, fb->height - 1, cmds[i]);
+    }
+    for (; i < fb->width; i++) {
+        fb_putchar(fb, i, fb->height - 1, '=');
+    }
+}
+
+static void sigwinchHandler(int sig) {
+    printf("\033[2J\033[H");  // Clear screen + move cursor to home
+    update_terminal_size();
+    // printf(
+    //     "Caught SIGWINCH, new window size: "
+    //     "%d rows * %d columns\n",
+    //     ws.ws_row, ws.ws_col);
+    draw();
 }
 
 /* Dynamic Iovec Array */
@@ -142,6 +197,12 @@ void print_iovec(const struct iovec* io) {
     printf("\tLen: %d", (int)io->iov_len);
 }
 
+char* string_iovec(const struct iovec* io) {
+    char* iovec_str = malloc(50 * sizeof(char));
+    sprintf(iovec_str, "Base: %p\tLen: %d", io->iov_base, (int)io->iov_len);
+    return iovec_str;
+}
+
 void print_dia(const DIA* arr, size_t max_elem) {
     // if (arr == NULL || arr->data == NULL) {
     //     printf("\nEmpty");
@@ -156,6 +217,25 @@ void print_dia(const DIA* arr, size_t max_elem) {
     if (min < arr->size) {
         printf("\nAnd other %zu Elements", (int)arr->size - min);
     }
+}
+
+char* string_dia(const DIA* arr, size_t max_elem) {
+    size_t min = max_elem <= arr->size ? max_elem : arr->size;
+
+    // todo actually think about
+    char* dia_str = malloc(min * 200);
+    if (!dia_str) return NULL;
+
+    char* p = dia_str;
+
+    for (size_t i = 0; i < min; i++) {
+        char* iovec_str = string_iovec(&arr->data[i]);
+        p += sprintf(p, "\n[%zu] = %s", i, iovec_str);
+        free(iovec_str);
+    }
+
+    *p = '\0';  // null-terminate
+    return dia_str;
 }
 
 void search_step_for_uint32_dia(DIA* local, DIA* remote,
@@ -330,7 +410,7 @@ int fill_remote_dia(DIA* remote, FILE* file) {
 
         i++;
     }
-    printf("\nFound %d regions for a total of %lu bytes", i, total_bytes);
+    // printf("\nFound %d regions for a total of %lu bytes", i, total_bytes);
 
     return i;
 }
@@ -466,6 +546,10 @@ void print_search_state(SearchState* sstate, int log_level) {
     DEBUG_PRINT(log_level, ("\nThe searched is %d", *(int*)sstate->searched));
 }
 
+char* string_search_state(SearchState* sstate) {
+    return string_dia(sstate->remote, 10);
+}
+
 void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
     if (pos >= sstate->remote->size) {
         DEBUG_PRINT(LOG_ERROR, ("Wrong Position, the size of remote is %zu",
@@ -552,6 +636,21 @@ void cmd_loop(SearchState* sstate) {
     }
 }
 
+void add_content(FrameBuffer* fb, SearchState* sstate) {
+    char* search_state = string_search_state(sstate);
+    fb_putstr(fb, 0,1, search_state);
+}
+
+/* Create the current buffer by adding he header, content, footer*/
+void draw(SearchState* sstate) {
+    update_terminal_size();
+    FrameBuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
+    add_header(&current_buffer);
+    add_content(&current_buffer, sstate);
+    add_footer(&current_buffer);
+    fb_swap(&current_buffer);
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         fprintf(stderr, "\nUsage: memmo <pid>");
@@ -575,12 +674,12 @@ int main(int argc, char** argv) {
         printf("\nInvalid PID value.");
         return 1;
     }
-    printf("\nInput PID = %d", user_input_pid);
+    // printf("\nInput PID = %d", user_input_pid);
 
     // Read maps of process
     char path[50];
     sprintf(path, "/proc/%d/maps", user_input_pid);
-    DEBUG_PRINT(LOG_INFO, ("\nOpening %s ...", path));
+    // DEBUG_PRINT(LOG_INFO, ("\nOpening %s ...", path));
     FILE* file = fopen(path, "r");
     if (!file) {
         perror("Error opening file");
@@ -602,10 +701,9 @@ int main(int argc, char** argv) {
     // Main Render loop
     enable_raw_mode();
     while (1) {
-        CLEAR_SCREEN;
-        draw();
+        draw(&initial_sstate);
         // get_input();
-        usleep(10000); //TODO find acceptable refresh rate
+        usleep(10000);  //TODO find acceptable refresh rate
     }
     // // Main CMD loop
     // cmd_loop(&initial_sstate);
