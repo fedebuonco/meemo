@@ -56,7 +56,6 @@ void update_terminal_size() {
 
 #define CLEAR_SCREEN "\033[2J"
 #define MOVE_CURSOR(row, col) printf("\033[%d;%dH", (row), (col))
-#define HIDE_CURSOR "\033[?25l"
 #define SHOW_CURSOR "\033[?25h"
 
 typedef struct {
@@ -83,14 +82,15 @@ void fb_putchar(FrameBuffer* fb, int x, int y, char ch) {
     fb->back[y * fb->width + x] = ch;
 }
 
+/* Put a string with possibility of using \n.*/
 void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
     int cx = x;
     int cy = y;
 
     while (*str) {
         if (*str == '\n') {
-            cx = x;  // Reset to initial column
-            cy++;    // Move to next row
+            cx = x;
+            cy++; 
         } else {
             fb_putchar(fb, cx, cy, *str);
             cx++;
@@ -112,7 +112,8 @@ void fb_swap(FrameBuffer* fb) {
         if (fb->front[i] != fb->back[i]) {
             int x = i % fb->width;
             int y = i / fb->width;
-            printf("\033[%d;%dH%c", y + 1, x + 1, fb->back[i]);
+            printf("\033[?25l"); // Hide the cursor
+            printf("\033[%d;%dH%c", y + 1, x + 1, fb->back[i]); // Cursor to home TODO
             fb->front[i] = fb->back[i];
         }
     }
@@ -192,31 +193,10 @@ void free_iovec_array(DIA* arr) {
     arr->capacity = 0;
 }
 
-void print_iovec(const struct iovec* io) {
-    printf("Base: %p", io->iov_base);
-    printf("\tLen: %d", (int)io->iov_len);
-}
-
 char* string_iovec(const struct iovec* io) {
     char* iovec_str = malloc(50 * sizeof(char));
     sprintf(iovec_str, "Base: %p\tLen: %d", io->iov_base, (int)io->iov_len);
     return iovec_str;
-}
-
-void print_dia(const DIA* arr, size_t max_elem) {
-    // if (arr == NULL || arr->data == NULL) {
-    //     printf("\nEmpty");
-    //     return;
-    // }
-    printf("\nDIA of %d Elements", (int)arr->size);
-    size_t min = max_elem <= arr->size ? max_elem : arr->size;
-    for (int i = 0; i < min; i++) {  // Fixed off-by-one error
-        printf("\n[%d] = ", i);
-        print_iovec(&arr->data[i]);
-    }
-    if (min < arr->size) {
-        printf("\nAnd other %zu Elements", (int)arr->size - min);
-    }
 }
 
 char* string_dia(const DIA* arr, size_t max_elem) {
@@ -415,46 +395,6 @@ int fill_remote_dia(DIA* remote, FILE* file) {
     return i;
 }
 
-void print_memory_hex_from_dia(const DIA* local, const DIA* remote,
-                               int bytes_per_line) {
-    for (int n_regions = 0; n_regions < remote->size; n_regions++) {
-        printf("\nRegion %d (size: %zd bytes):", n_regions,
-               local->data[n_regions].iov_len);
-        printf("\nPress to print region...");
-
-        const unsigned char* p =
-            (const unsigned char*)local->data[n_regions].iov_base;
-        const unsigned char* p_remote =
-            (const unsigned char*)remote->data[n_regions].iov_base;
-
-        char current_line[bytes_per_line + 1];
-
-        for (size_t i = 0; i < local->data[n_regions].iov_len; i++) {
-            if (i % bytes_per_line == 0) {
-                if (i != 0) {  // Skip first line
-                    printf("  %s", current_line);
-                }
-                printf("\n%p: ", p_remote + i);
-            }
-            printf("%02x ", p[i]);
-            // .' for non-printable TODO common?
-            current_line[i % bytes_per_line] = isprint(p[i]) ? p[i] : '.';
-            current_line[(i % bytes_per_line) + 1] = '\0';
-        }
-
-        // Print last ASCII
-        size_t remainder = local->data[n_regions].iov_len % bytes_per_line;
-        if (remainder > 0) {
-            for (size_t i = 0; i < (bytes_per_line - remainder); i++) {
-                printf("   ");  // 3 spaces to align with "%02x "
-            }
-            printf("  %s", current_line);
-        }
-
-        printf("\n");
-    }
-}
-
 void cmd_loop(SearchState* sstate);
 
 void advance_state(SearchState* sstate) {
@@ -517,33 +457,6 @@ void search_step_dia(SearchState* sstate) {
         return;
     }
 
-    //print_memory_hex_from_dia(sstate->next_local, sstate->next_remote, 16);
-}
-
-void print_search_state(SearchState* sstate, int log_level) {
-    DEBUG_PRINT(log_level,
-                ("\nRemote has currently size of %zu", sstate->remote->size));
-    DEBUG_PRINT(log_level, ("\nPrint Remote..."));
-    print_dia(sstate->remote, 10);
-
-    if (sstate->local->size != 0) {
-        DEBUG_PRINT(log_level,
-                    ("\nLocal has currently size of %zu", sstate->local->size));
-        DEBUG_PRINT(log_level, ("\nPrint Local..."));
-        print_dia(sstate->local, 10);
-    }
-
-    if (sstate->next_remote != NULL) {
-        DEBUG_PRINT(log_level, ("\n\nPrint Next Remote..."));
-        print_dia(sstate->next_remote, 10);
-    }
-
-    if (sstate->next_local != NULL) {
-        DEBUG_PRINT(log_level, ("\n\nPrint Next Local..."));
-        print_dia(sstate->next_local, 10);
-    }
-
-    DEBUG_PRINT(log_level, ("\nThe searched is %d", *(int*)sstate->searched));
 }
 
 char* string_search_state(SearchState* sstate) {
@@ -592,7 +505,6 @@ void cmd_loop(SearchState* sstate) {
                          "once.\nPerform at least one search."));
                     continue;
                 }
-                print_search_state(sstate, LOG_WARN);
                 break;
             case 's':
                 printf("\nSearching %s",
@@ -702,7 +614,7 @@ int main(int argc, char** argv) {
     enable_raw_mode();
     while (1) {
         draw(&initial_sstate);
-        // get_input();
+        get_input();
         usleep(10000);  //TODO find acceptable refresh rate
     }
     // // Main CMD loop
