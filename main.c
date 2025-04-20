@@ -171,6 +171,7 @@ void add_footer(FrameBuffer* fb) {
         fb_putchar(fb, i, fb->height - 1, '=');
     }
 }
+
 sig_atomic_t fb_need_resize = 0;
 
 static void sigwinchHandler(int sig) {
@@ -346,9 +347,7 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     return nread;
 }
 
-/*  Clears the framebuffer
-    start
-*/
+/*  Clears from start_row to end_row */
 void fb_clear_rows(FrameBuffer* fb, int start_row, int end_row) {
     int i = (start_row * fb->width);
     for (; i <= end_row * fb->width; i++) {
@@ -413,7 +412,6 @@ int fill_remote_dia(DIA* remote, FILE* file) {
     return i;
 }
 
-void cmd_loop(SearchState* sstate);
 
 void advance_state(SearchState* sstate) {
     free_iovec_array(sstate->remote);
@@ -497,59 +495,6 @@ void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
     add_iovec(temp_remote, temp_r);
 
     write_to_remote_dia(sstate->pid, temp_write, temp_remote);
-}
-
-/*Main command loop, parses the various subcommands and then dispatch.*/
-void cmd_loop(SearchState* sstate) {
-    char cmd[25];
-    while (1) {
-        // printf("\n\n\033[1;33mMeemo>\033[0m ");
-        if (fgets(cmd, sizeof(cmd), stdin) == NULL) {
-            continue;
-        }
-        // printf("\033[2J\033[H");  // Clear screen + move cursor to home
-        // printf("\nInput was: %s", cmd);
-        char cmd_letter = cmd[0];
-        char* rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
-        switch (cmd_letter) {
-            case 'p':  // s value
-                if (sstate->search_cnt == 0) {
-                    continue;
-                }
-                break;
-            case 's':
-                printf("\nSearching %s",
-                       rest);  // If searched not specified already
-                int32_t search_value;
-                if (sscanf(rest, "%d", &search_value) != 1) {
-                    continue;
-                }
-                sstate->searched = &search_value;
-                search_step_dia(sstate);
-                sstate->search_cnt++;
-                break;
-            case 'w':  //w pointer value
-                printf("\nWriting...");
-                size_t pos;
-                int32_t value;
-                if (sscanf(rest, "%zu %d", &pos, &value) != 2) {
-                    continue;
-                }
-                write_value_at_pos(sstate, pos, value);
-                break;
-            case 'q':  //quit
-                printf("\nQuitting...");
-                exit(0);
-                break;
-            case 'h':  //quit
-                printf(
-                    "\ns value_to_search\nw pointer value_to_write\nq quit.");
-                break;
-            default:
-                printf("\nCommand not recognized");
-                break;
-        }
-    }
 }
 
 /*Will remove raw_mode, and get input at a specific location in the ui.*/
