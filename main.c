@@ -3,7 +3,6 @@
 #include <bits/types/struct_iovec.h>
 #include <stddef.h>
 #define _GNU_SOURCE
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -40,14 +39,48 @@
 
 struct winsize ws;
 struct sigaction sa;
+typedef struct SearchState SearchState;
+SearchState* state_handle = NULL;
+void handle_cmd(SearchState* sstate, char cmd);
+
+struct termios orig_termios;
+
+void disable_raw_mode() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
 
 void enable_raw_mode() {
-    struct termios raw;
-    tcgetattr(STDIN_FILENO, &raw);
-    raw.c_lflag &= ~(ECHO);
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    atexit(disable_raw_mode);
+
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);  // disable echo + canonical mode
+    raw.c_cc[VMIN] = 0;               // non-blocking read
+    raw.c_cc[VTIME] = 0;
+
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
-void draw();
+
+int keypress() {
+    struct timeval tv = {0, 0};
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
+}
+
+int get_input() {
+    if (keypress()) {
+        char c;
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            handle_cmd(state_handle, c);
+        }
+    }
+    return 0;
+}
+
+void draw(SearchState* sstate);
+
 void update_terminal_size() {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
         exit(1);
@@ -90,7 +123,7 @@ void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
     while (*str) {
         if (*str == '\n') {
             cx = x;
-            cy++; 
+            cy++;
         } else {
             fb_putchar(fb, cx, cy, *str);
             cx++;
@@ -112,8 +145,9 @@ void fb_swap(FrameBuffer* fb) {
         if (fb->front[i] != fb->back[i]) {
             int x = i % fb->width;
             int y = i / fb->width;
-            printf("\033[?25l"); // Hide the cursor
-            printf("\033[%d;%dH%c", y + 1, x + 1, fb->back[i]); // Cursor to home TODO
+            printf("\033[?25l");  // Hide the cursor
+            printf("\033[%d;%dH%c", y + 1, x + 1,
+                   fb->back[i]);  // Cursor to home TODO
             fb->front[i] = fb->back[i];
         }
     }
@@ -149,7 +183,7 @@ static void sigwinchHandler(int sig) {
     //     "Caught SIGWINCH, new window size: "
     //     "%d rows * %d columns\n",
     //     ws.ws_row, ws.ws_col);
-    draw();
+    draw(state_handle);
 }
 
 /* Dynamic Iovec Array */
@@ -204,7 +238,8 @@ char* string_dia(const DIA* arr, size_t max_elem) {
 
     // todo actually think about
     char* dia_str = malloc(min * 200);
-    if (!dia_str) return NULL;
+    if (!dia_str)
+        return NULL;
 
     char* p = dia_str;
 
@@ -286,7 +321,7 @@ typedef enum {
     TYPE_CHAR
 } SearchDataType;
 
-typedef struct {
+typedef struct SearchState {
     DIA* local;
     DIA* remote;
     DIA* next_local;
@@ -456,7 +491,6 @@ void search_step_dia(SearchState* sstate) {
         advance_state(sstate);
         return;
     }
-
 }
 
 char* string_search_state(SearchState* sstate) {
@@ -492,7 +526,7 @@ void cmd_loop(SearchState* sstate) {
         if (fgets(cmd, sizeof(cmd), stdin) == NULL) {
             continue;
         }
-        printf("\033[2J\033[H");  // Clear screen + move cursor to home
+        // printf("\033[2J\033[H");  // Clear screen + move cursor to home
         // printf("\nInput was: %s", cmd);
         char cmd_letter = cmd[0];
         char* rest = (strlen(cmd) > 1) ? &cmd[1] : NULL;
@@ -548,9 +582,34 @@ void cmd_loop(SearchState* sstate) {
     }
 }
 
+/*Main command loop, parses the various subcommands and then dispatch.*/
+void handle_cmd(SearchState* sstate, char cmd) {
+    switch (cmd) {
+        case 'p':  // s value
+            // TODO change the current content framebuffer to print the current state
+            break;
+        case 's':
+             // TODO Need input from the user so remove raw mode ask for input and put raw mode again
+             // then search
+            break;
+        case 'w':  //w pointer value
+             // TODO Need input from the user so remove raw mode ask for input and put raw mode again
+             // then write
+            break;
+        case 'q':  //quit
+            disable_raw_mode();
+            printf("\nQuitting...");
+            exit(0);
+            break;
+        default:
+            // TODO Add to content that the command was not recogn
+            break;
+    }
+}
+
 void add_content(FrameBuffer* fb, SearchState* sstate) {
     char* search_state = string_search_state(sstate);
-    fb_putstr(fb, 0,1, search_state);
+    fb_putstr(fb, 0, 1, search_state);
 }
 
 /* Create the current buffer by adding he header, content, footer*/
@@ -610,6 +669,7 @@ int main(int argc, char** argv) {
                                   next_remote,    type,   NULL,
                                   user_input_pid, file,   0};
 
+    state_handle = &initial_sstate;
     // Main Render loop
     enable_raw_mode();
     while (1) {
