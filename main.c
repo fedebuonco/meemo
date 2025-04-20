@@ -25,6 +25,12 @@
 #define WRITE_ASK 10
 #define IOV_MAX_BATCH 1024
 
+/*String max for print*/
+#define IOVEC_MAX_STR 32
+
+/*UI Strings*/
+#define SUBCMD_PROMPT "\033[1;33mMeemo>\033[0m "
+
 /* Search State*/
 typedef struct SearchState SearchState;
 typedef struct FrameBuffer FrameBuffer;
@@ -47,7 +53,11 @@ void disable_raw_mode(void) {
 }
 
 void enable_raw_mode(void) {
-    tcgetattr(STDIN_FILENO, &orig_termios);
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr: failed to read terminal attributes");
+        exit(EXIT_FAILURE);
+    }
+
     atexit(disable_raw_mode);
 
     struct termios raw = orig_termios;
@@ -55,7 +65,10 @@ void enable_raw_mode(void) {
     raw.c_cc[VMIN] = 0;               // non-blocking read
     raw.c_cc[VTIME] = 0;
 
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr: failed to apply raw mode");
+        exit(EXIT_FAILURE);
+    } 
 }
 
 int keypress(void) {
@@ -123,7 +136,8 @@ void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
         if (*str == '\n') {
             cx = x;
             cy++;
-        } else {
+        } 
+        else {
             fb_putchar(fb, cx, cy, *str);
             cx++;
             if (cx >= fb->width) {  // Wrap line if needed
@@ -176,7 +190,7 @@ void add_footer(FrameBuffer* fb) {
     }
 }
 
-sig_atomic_t fb_need_resize = 0;
+volatile sig_atomic_t fb_need_resize = 0;
 
 static void sigwinchHandler(int sig) {
     (void)sig;
@@ -202,19 +216,24 @@ DIA* init_iovec_array(size_t initial_capacity) {
     return arr;
 }
 
-void add_iovec(DIA* arr, struct iovec value) {
-    if (arr->size == arr->capacity) {
-        arr->capacity *= 2;
+/*
+    Add an iovec to the the DIA.
+    Uses a simple dynamic array approach where we x2 everytime we need more space.
+*/
+void add_iovec(DIA* dia, struct iovec value) {
+    if (dia->size == dia->capacity) {
+        dia->capacity *= 2;
         struct iovec* new_data =
-            realloc(arr->data, arr->capacity * sizeof(struct iovec));
+            realloc(dia->data, dia->capacity * sizeof(struct iovec));
         if (!new_data) {
+            // TODO
             perror("Failed to reallocate memory");
             exit(EXIT_FAILURE);
         }
-        arr->data = new_data;
+        dia->data = new_data;
     }
 
-    arr->data[arr->size++] = value;
+    dia->data[dia->size++] = value;
 }
 
 void free_iovec_array(DIA* arr) {
@@ -225,49 +244,73 @@ void free_iovec_array(DIA* arr) {
 }
 
 char* string_iovec(const struct iovec* io) {
-    char* iovec_str = malloc(50 * sizeof(char));
-    sprintf(iovec_str, "Base: %p\tLen: %d", io->iov_base, (int)io->iov_len);
+    char* iovec_str = malloc(IOVEC_MAX_STR);
+    if (!iovec_str) return NULL;
+    int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d", io->iov_base, (int)io->iov_len);
+    if (written < 0 || written >= IOVEC_MAX_STR) {
+        free(iovec_str);
+        return NULL;
+    }
     return iovec_str;
 }
 
 char* string_dia(const DIA* arr, size_t max_elem) {
     size_t min = max_elem <= arr->size ? max_elem : arr->size;
 
-    // todo actually think about
-    char* dia_str = malloc(min * 200);
+    // Need to store enough potentially for all the displayed elements
+    char* dia_str = malloc(min * 50);
     if (!dia_str) {
         return NULL;
     }
 
+    
     char* p = dia_str;
-
     for (size_t i = 0; i < min; i++) {
         char* iovec_str = string_iovec(&arr->data[i]);
-        p += sprintf(p, "\n[%zu] = %s", i, iovec_str);
+        if (!iovec_str) {
+            free(dia_str);
+            return NULL;
+        }
+        int written = snprintf(p,50, "\n[%zu] = %s", i, iovec_str);
         free(iovec_str);
+        if (written < 0 || written >= 50) {
+            free(dia_str);
+            return NULL;
+        }
+        p+=written;
     }
 
-    *p = '\0';  // null-terminate
+    *p = '\0';
     return dia_str;
 }
 
+/*
+    Access the memory using unsigned char *
+    This is always safe even if unaligned to uint32_t.
+    For every region creates the pointer,
+    then scans the entirety of the region.
+    After the first search a region == one found searched.
+    Scan the local and every find in it put the corresponding
+    remote object in the next_remote.
+*/
 void search_step_for_uint32_dia(DIA* local, DIA* remote,
                                 DIA* next_remote_iov_array, size_t len,
                                 uint32_t* searched) {
+    // For each region
     for (size_t n_regions = 0; n_regions < len; n_regions++) {
-        const unsigned char* p =
+        const unsigned char* base_l =
             (const unsigned char*)local->data[n_regions].iov_base;
-        const unsigned char* p_remote =
+        const unsigned char* base_r =
             (const unsigned char*)remote->data[n_regions].iov_base;
 
-        for (size_t i = 0;
-             i <= local->data[n_regions].iov_len - sizeof(uint32_t); i++) {
+        // Scan all the region with a memcpy
+        for (size_t offset = 0;
+             offset <= local->data[n_regions].iov_len - sizeof(uint32_t);
+             offset++) {
             uint32_t val;
-            memcpy(&val, p + i, sizeof(uint32_t));  // Safe memory access
+            memcpy(&val, base_l + offset, sizeof(uint32_t));
             if (val == *searched) {
-                // I now fill the next remote iovec so that it will be used to
-                // get and read the data for the next
-                uintptr_t base = (uintptr_t)p_remote + i;
+                uintptr_t base = (uintptr_t)base_r + offset;
                 struct iovec next_remote_iov = {.iov_base = (void*)base,
                                                 .iov_len = sizeof(int32_t)};
 
@@ -277,6 +320,11 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
     }
 }
 
+/*
+    Meemo uses iovec to store data found.
+    Cannot pass more than 1024 iovec to process_vm_readv.
+    So we batch them.
+*/
 ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
                                struct iovec* riovec, size_t rn) {
     ssize_t total_read = 0;
@@ -289,23 +337,17 @@ ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
             batch = rn - offset;
         }
 
-        // printf("\nReading batch: offset=%zu, batch=%zu", offset, batch);
-
         ssize_t nread = process_vm_readv(pid, liovec + offset, batch,
                                          riovec + offset, batch, 0);
 
         if (nread == -1) {
-            // fprintf(stderr, "\nprocess_vm_readv failed at offset %zu: %s",
-            //         offset, strerror(errno));
+            //TODO
             break;
         }
-
-        // printf("\nBytes read in batch: %zd", nread);
         total_read += nread;
         offset += batch;
     }
 
-    // printf("\nTotal bytes read: %zd", total_read);
     return total_read;
 }
 
@@ -329,12 +371,15 @@ typedef struct SearchState {
     int search_cnt;
 } SearchState;
 
+/*
+    Takes in a remote DIA and reads it in a local DIA.
+    The local dia iovec's are allocated inside.
+*/
 ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
-    // Use remote size to allocate local
     for (size_t i = 0; i < rdia->size; i++) {
         void* buffer = malloc(rdia->data[i].iov_len);
         if (!buffer) {
-            perror("malloc failed");
+            // TODO how to exit? Probably need to show it better than this.
             exit(EXIT_FAILURE);
         }
         struct iovec local_iov = {.iov_base = buffer,
@@ -342,6 +387,7 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
+
     ssize_t nread = batch_process_vm_readv(pid, ldia->data, ldia->size,
                                            rdia->data, rdia->size);
     return nread;
@@ -420,6 +466,7 @@ void advance_state(SearchState* sstate) {
 
 void reset_current_state(SearchState* sstate) {
     free_iovec_array(sstate->local);
+    free_iovec_array(sstate->next_remote);
 
     sstate->local = init_iovec_array(sstate->remote->size);
 
@@ -427,48 +474,40 @@ void reset_current_state(SearchState* sstate) {
     sstate->next_local = NULL;
 }
 
-void search_step_dia(SearchState* sstate) {
-    // Takes in a state with remote filled.
-    // local is init but no iovecs,
-    // the remotes are null.
-    //
-    // Init the next_remote.
-    // read from remote to local.
-    // search on the local and update the next remote
-    // create the next local
-    // advance state
-
+/* 
+    Perform a search on sstate->remote and prepare the next step.
+    Finally advances the state.
+*/
+size_t search_step_dia(SearchState* sstate) {
     // next_remote will be filled for the next step
     sstate->next_remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-
-    // Switch on type
     switch (sstate->type) {
         case TYPE_UINT_32:
-            // TODO handle error
             read_from_remote_dia(sstate->pid, sstate->local, sstate->remote);
             search_step_for_uint32_dia(
                 sstate->local, sstate->remote, sstate->next_remote,
                 sstate->remote->size, (uint32_t*)sstate->searched);
             break;
         default:
-        // TODO add more types
+            // TODO add more types
             break;
     }
 
-    if (sstate->next_remote->size == 0) {
-        // printf("\nNo result for the searched.");
+    size_t found = sstate->next_remote->size;
+    if (found == 0) {
         reset_current_state(sstate);
-        return;
     } else {
-        // printf("\nFound %zu Results. Going to next Step...",
-        //        sstate->next_remote->size);
         advance_state(sstate);
-        return;
     }
+    return found;
 }
 
 char* string_search_state(SearchState* sstate) {
-    return string_dia(sstate->remote, ws.ws_row - 5);
+    if (sstate == NULL){
+        return NULL;
+    }
+    //TODO notify that there are more elements
+   return string_dia(sstate->remote, ws.ws_row - 5);
 }
 
 void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
@@ -494,24 +533,22 @@ void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
 char* get_input_in_cmdbar(void) {
     int input_row = ws.ws_row - 1;
     int input_col_ps1 = 0;
-    int input_col_cmd = 10;
+    int input_col_cmd = 8;  
     char* buffer = malloc(256 * sizeof(char));
 
-    MOVE_CURSOR(input_row, input_col_ps1);  // Position for the prompt
-    // TODO accept ps1 from args
-    printf("\033[1;33mMeemo>\033[0m ");
-
+    
     disable_raw_mode();
-
-    // Position cursor where input should appear
+    
+    MOVE_CURSOR(input_row, input_col_ps1);
+    printf(SUBCMD_PROMPT);
+  
     MOVE_CURSOR(input_row, input_col_cmd);
     fgets(buffer, sizeof(buffer), stdin);
 
-    // Re-enable raw mode
     enable_raw_mode();
 
     // Clear the line
-    MOVE_CURSOR(input_row, input_col_ps1);  // Position for the prompt
+    MOVE_CURSOR(input_row, input_col_ps1);
     printf("\033[2K");
 
     return buffer;
@@ -520,7 +557,7 @@ char* get_input_in_cmdbar(void) {
 /*Main command loop, parses the various subcommands and then dispatch.*/
 void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
     switch (cmd) {
-        case 's': ;
+        case 's':;
             char* s_subcmd = get_input_in_cmdbar();
             int32_t search_value;
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
@@ -529,12 +566,12 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             sstate->searched = &search_value;
             search_step_dia(sstate);
             // INTENTIONAL FALLTROUGH
-        case 'p':  // Print the current status
-            fb_clear_rows(fb, 1, fb->height - 2);
+        case 'p':
+            fb_clear_rows(fb, 3, fb->height - 1);
             char* search_state = string_search_state(sstate);
-            fb_putstr(fb, 0, 1, search_state);
+            fb_putstr(fb, 0, 3, search_state);
             break;
-        case 'w': ;
+        case 'w':;
             char* w_subcmd = get_input_in_cmdbar();
             size_t pos;
             int32_t value;
