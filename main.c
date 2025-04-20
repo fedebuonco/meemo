@@ -1,8 +1,8 @@
-#include <assert.h>
 #include <bits/posix1_lim.h>
 #include <bits/types/struct_iovec.h>
 #include <complex.h>
 #include <stddef.h>
+#include <sys/select.h>
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +16,8 @@
 #include <sys/uio.h>
 #include <termios.h>
 #include <unistd.h>
+
+#define MEEMO_VERSION "0.0.1"
 
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
@@ -40,11 +42,11 @@ struct sigaction sa;
 /*Store the original terminal settings. Will be restored at the exit.*/
 struct termios orig_termios;
 
-void disable_raw_mode() {
+void disable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-void enable_raw_mode() {
+void enable_raw_mode(void) {
     tcgetattr(STDIN_FILENO, &orig_termios);
     atexit(disable_raw_mode);
 
@@ -56,7 +58,7 @@ void enable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-int keypress() {
+int keypress(void) {
     struct timeval tv = {0, 0};
     fd_set fds;
     FD_ZERO(&fds);
@@ -74,7 +76,7 @@ int process_input(FrameBuffer* fb, SearchState* sstate) {
     return 0;
 }
 
-void update_terminal_size() {
+void update_terminal_size(void) {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
         exit(1);
     }
@@ -91,7 +93,7 @@ FrameBuffer init_fb(int width, int height) {
     FrameBuffer fb;
     fb.width = width;
     fb.height = height;
-    size_t size = fb.width * fb.height;
+    size_t size = (long)fb.width * fb.height;
     fb.front = calloc(size, sizeof(char));
     fb.back = calloc(size, sizeof(char));
     return fb;
@@ -106,9 +108,10 @@ void free_fb(FrameBuffer* fb) {
 
 /* Put the char in back buffer at (x,y) so that at draw time it will only be displayed if != front*/
 void fb_putchar(FrameBuffer* fb, int x, int y, char ch) {
-    if (x < 0 || x >= fb->width || y < 0 || y >= fb->height)
+    if (x < 0 || x >= fb->width || y < 0 || y >= fb->height) {
         return;
-    fb->back[y * fb->width + x] = ch;
+    }
+    fb->back[(y * fb->width) + x] = ch;
 }
 
 /* Put a string with possibility of using \n.*/
@@ -129,8 +132,9 @@ void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
             }
         }
 
-        if (cy >= fb->height)
+        if (cy >= fb->height) {
             break;
+        }
         str++;
     }
 }
@@ -151,30 +155,31 @@ void fb_swap(FrameBuffer* fb) {
 }
 
 void add_header(FrameBuffer* fb) {
-    static const char* title = "Meemo 0.0.1 ";
-    int i = 0;
+    static const char* title = "Meemo " MEEMO_VERSION;
+    size_t i = 0;
     for (; i < strlen(title); ++i) {
-        fb_putchar(fb, i, 0, title[i]);
+        fb_putchar(fb, (int)i, 0, title[i]);
     }
-    for (; i < fb->width; ++i) {
-        fb_putchar(fb, i, 0, '=');
+    for (; (int)i < fb->width; ++i) {
+        fb_putchar(fb, (int)i, 0, '=');
     }
 }
 
 void add_footer(FrameBuffer* fb) {
     static const char* cmds = " s: search | p: print | w: write | q: quit ";
-    int i = 0;
+    size_t i = 0;
     for (; i < strlen(cmds); i++) {
-        fb_putchar(fb, i, fb->height - 1, cmds[i]);
+        fb_putchar(fb, (int)i, fb->height - 1, cmds[i]);
     }
-    for (; i < fb->width; i++) {
-        fb_putchar(fb, i, fb->height - 1, '=');
+    for (; (int)i < fb->width; i++) {
+        fb_putchar(fb, (int)i, fb->height - 1, '=');
     }
 }
 
 sig_atomic_t fb_need_resize = 0;
 
 static void sigwinchHandler(int sig) {
+    (void)sig;
     fb_need_resize = 1;
 }
 
@@ -230,8 +235,9 @@ char* string_dia(const DIA* arr, size_t max_elem) {
 
     // todo actually think about
     char* dia_str = malloc(min * 200);
-    if (!dia_str)
+    if (!dia_str) {
         return NULL;
+    }
 
     char* p = dia_str;
 
@@ -248,7 +254,7 @@ char* string_dia(const DIA* arr, size_t max_elem) {
 void search_step_for_uint32_dia(DIA* local, DIA* remote,
                                 DIA* next_remote_iov_array, size_t len,
                                 uint32_t* searched) {
-    for (int n_regions = 0; n_regions < len; n_regions++) {
+    for (size_t n_regions = 0; n_regions < len; n_regions++) {
         const unsigned char* p =
             (const unsigned char*)local->data[n_regions].iov_base;
         const unsigned char* p_remote =
@@ -261,7 +267,8 @@ void search_step_for_uint32_dia(DIA* local, DIA* remote,
             if (val == *searched) {
                 // I now fill the next remote iovec so that it will be used to
                 // get and read the data for the next
-                struct iovec next_remote_iov = {.iov_base = p_remote + i,
+                uintptr_t base = (uintptr_t)p_remote + i;
+                struct iovec next_remote_iov = {.iov_base = (void*)base,
                                                 .iov_len = sizeof(int32_t)};
 
                 add_iovec(next_remote_iov_array, next_remote_iov);
@@ -278,8 +285,9 @@ ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
     while (offset < ln && offset < rn) {
         size_t batch =
             (ln - offset < IOV_MAX_BATCH) ? (ln - offset) : IOV_MAX_BATCH;
-        if (rn - offset < batch)
+        if (rn - offset < batch) {
             batch = rn - offset;
+        }
 
         // printf("\nReading batch: offset=%zu, batch=%zu", offset, batch);
 
@@ -323,7 +331,7 @@ typedef struct SearchState {
 
 ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     // Use remote size to allocate local
-    for (int i = 0; i < rdia->size; i++) {
+    for (size_t i = 0; i < rdia->size; i++) {
         void* buffer = malloc(rdia->data[i].iov_len);
         if (!buffer) {
             perror("malloc failed");
@@ -334,14 +342,6 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 
         add_iovec(ldia, local_iov);
     }
-
-    size_t total_iov_len_remote = 0;
-    size_t total_iov_len_local = 0;
-    for (size_t i = 0; i < rdia->size; i++) {
-        total_iov_len_remote += rdia->data[i].iov_len;
-        total_iov_len_local += ldia->data[i].iov_len;
-    }
-
     ssize_t nread = batch_process_vm_readv(pid, ldia->data, ldia->size,
                                            rdia->data, rdia->size);
     return nread;
@@ -388,8 +388,6 @@ int fill_remote_dia(DIA* remote, FILE* file) {
     char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
     int dev_major, dev_minor, inode;
     unsigned long offset;
-
-    uint64_t total_bytes = 0;
     int i = 0;
 
     while (i < MAX_LINES &&
@@ -399,19 +397,15 @@ int fill_remote_dia(DIA* remote, FILE* file) {
         uintptr_t start, end;
         sscanf(address_range, "%lx-%lx", &start, &end);
 
-        ssize_t len = end - start;
-
         struct iovec temp;
         temp.iov_base = (void*)start;
         temp.iov_len = end - start;
-        total_bytes += temp.iov_len;
         add_iovec(remote, temp);
 
         i++;
     }
     return i;
 }
-
 
 void advance_state(SearchState* sstate) {
     free_iovec_array(sstate->remote);
@@ -450,16 +444,15 @@ void search_step_dia(SearchState* sstate) {
     // Switch on type
     switch (sstate->type) {
         case TYPE_UINT_32:
-            // printf("\nStarting search for TYPE_UINT_32:  %d",
-            //        *(uint32_t*)sstate->searched);
-            ssize_t read = read_from_remote_dia(sstate->pid, sstate->local,
-                                                sstate->remote);
+            // TODO handle error
+            read_from_remote_dia(sstate->pid, sstate->local, sstate->remote);
             search_step_for_uint32_dia(
                 sstate->local, sstate->remote, sstate->next_remote,
                 sstate->remote->size, (uint32_t*)sstate->searched);
             break;
         default:
-            // printf("\nUnknown type");
+        // TODO add more types
+            break;
     }
 
     if (sstate->next_remote->size == 0) {
@@ -498,7 +491,7 @@ void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
 }
 
 /*Will remove raw_mode, and get input at a specific location in the ui.*/
-char* get_input_in_cmdbar() {
+char* get_input_in_cmdbar(void) {
     int input_row = ws.ws_row - 1;
     int input_col_ps1 = 0;
     int input_col_cmd = 10;
@@ -527,7 +520,7 @@ char* get_input_in_cmdbar() {
 /*Main command loop, parses the various subcommands and then dispatch.*/
 void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
     switch (cmd) {
-        case 's':
+        case 's': ;
             char* s_subcmd = get_input_in_cmdbar();
             int32_t search_value;
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
@@ -535,12 +528,13 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             }
             sstate->searched = &search_value;
             search_step_dia(sstate);
+            // INTENTIONAL FALLTROUGH
         case 'p':  // Print the current status
             fb_clear_rows(fb, 1, fb->height - 2);
             char* search_state = string_search_state(sstate);
             fb_putstr(fb, 0, 1, search_state);
             break;
-        case 'w':
+        case 'w': ;
             char* w_subcmd = get_input_in_cmdbar();
             size_t pos;
             int32_t value;
@@ -563,7 +557,7 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
 }
 
 /* Create the current buffer by adding he header, content, footer*/
-void draw(FrameBuffer* fb, SearchState* sstate) {
+void draw(FrameBuffer* fb) {
     add_header(fb);
     add_footer(fb);
     fb_swap(fb);
@@ -636,7 +630,7 @@ int main(int argc, char** argv) {
         // Draw buffer for frame x
         // Input that changes the buffer for frame x+1
         // Wait
-        draw(&current_buffer, &initial_sstate);
+        draw(&current_buffer);
         process_input(&current_buffer, &initial_sstate);
         usleep(10000);  //TODO find acceptable refresh rate
     }
