@@ -556,6 +556,8 @@ char* get_input_in_cmdbar(void) {
 
 /*Main command loop, parses the various subcommands and then dispatch.*/
 void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
+    // Clear the previous content
+    fb_clear_rows(fb, 2, fb->height - 1);
     switch (cmd) {
         case 's':;
             char* s_subcmd = get_input_in_cmdbar();
@@ -564,10 +566,13 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
                 return;
             }
             sstate->searched = &search_value;
-            search_step_dia(sstate);
+            size_t found = search_step_dia(sstate);
+            if (found == 0){
+                static const char * nf = "Not Found. Search State has not advanced. Displaying previous state:";
+                fb_putstr(fb, 0, 2, nf);
+            }
             // INTENTIONAL FALLTROUGH
         case 'p':
-            fb_clear_rows(fb, 3, fb->height - 1);
             char* search_state = string_search_state(sstate);
             fb_putstr(fb, 0, 3, search_state);
             break;
@@ -579,6 +584,8 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
                 return;
             }
             write_value_at_pos(sstate, pos, value);
+            static const char * wr = "Written...";
+            fb_putstr(fb, 0, 2, wr);
             break;
         case 'q':  //quit
             printf(CLEAR_SCREEN);
