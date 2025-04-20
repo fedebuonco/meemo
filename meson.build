@@ -1,4 +1,4 @@
-project('memmo', 'c')
+project('meemo', 'c')
 add_project_arguments('-g','-O0', language: 'c')
 # Find Clang-Format and Clang-Tidy
 clang_format = find_program('clang-format', required: false)
@@ -9,4 +9,4 @@ if clang_format.found()
 endif
 
 # Build the executable and link it with the static library
-executable('memmo', 'main.c')
+executable('meemo', 'main.c')

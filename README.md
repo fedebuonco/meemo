@@ -1,6 +1,6 @@
-# Memmo
+# meemo
 
-Memmo is a 1kLOC Memory scanner with no deps.
+meemo is a 1kLOC Memory scanner with no deps.
 When I was a kid I loved playing pinball on windows xp.
 After i discovered cheat engine I had the best score in the house :)
 

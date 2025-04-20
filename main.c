@@ -565,7 +565,7 @@ void draw(FrameBuffer* fb) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        fprintf(stderr, "\nUsage: memmo <pid>");
+        fprintf(stderr, "\nUsage: meemo <pid>");
         exit(1);
     }
 
