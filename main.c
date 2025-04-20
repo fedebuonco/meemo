@@ -280,6 +280,15 @@ char* string_dia(const DIA* arr, size_t max_elem) {
         p+=written;
     }
 
+    if (min< arr->size){
+        int written = snprintf(p,50, "\nAnd %zu more. Refine the search.", arr->size -min);
+        if (written < 0 || written >= 50) {
+            free(dia_str);
+            return NULL;
+        }
+        p+=written;
+    }
+
     *p = '\0';
     return dia_str;
 }
@@ -506,8 +515,7 @@ char* string_search_state(SearchState* sstate) {
     if (sstate == NULL){
         return NULL;
     }
-    //TODO notify that there are more elements
-   return string_dia(sstate->remote, ws.ws_row - 5);
+   return string_dia(sstate->remote, ws.ws_row - 8);
 }
 
 void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
