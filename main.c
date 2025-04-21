@@ -19,29 +19,29 @@
 
 #define MEEMO_VERSION "0.0.1"
 
-#define MAX_LINES 500
-#define MAX_STR_LEN 500
-#define INITIAL_IOVEC_ARRAY_CAP 64
-#define WRITE_ASK 10
-#define IOV_MAX_BATCH 1024
+/*Reading maps*/
+#define MAX_STR_LEN_MAPS_COL 128
+#define MAX_MAPS_LINES 1024
 
-/*String max for print*/
-#define IOVEC_MAX_STR 32
+/*IOVEC*/
+#define INITIAL_IOVEC_ARRAY_CAP 64
+#define IOV_MAX_BATCH 1024
 
 /*UI Strings*/
 #define SEARCH_STR "\033[1;33m(search)\033[0m "
 #define WRITE_STR "\033[1;33m(write)\033[0m "
+#define IOVEC_MAX_STR 32
+
+/* Terminal */
+#define MOVE_CURSOR(row, col) printf("\033[%d;%dH", (row), (col))
+#define SHOW_CURSOR "\033[?25h"
+#define CLEAR_SCREEN "\033[2J"
 
 /* Search State*/
 typedef struct SearchState SearchState;
 typedef struct FrameBuffer FrameBuffer;
 
 void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd);
-
-/* Terminal */
-#define CLEAR_SCREEN "\033[2J"
-#define MOVE_CURSOR(row, col) printf("\033[%d;%dH", (row), (col))
-#define SHOW_CURSOR "\033[?25h"
 
 struct winsize ws;
 struct sigaction sa;
@@ -451,12 +451,13 @@ ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 }
 
 int fill_remote_dia(DIA* remote, FILE* file) {
-    char address_range[MAX_STR_LEN], perms[MAX_STR_LEN], pathname[MAX_STR_LEN];
+    char address_range[MAX_STR_LEN_MAPS_COL], perms[MAX_STR_LEN_MAPS_COL],
+        pathname[MAX_STR_LEN_MAPS_COL];
     int dev_major, dev_minor, inode;
     unsigned long offset;
     int i = 0;
 
-    while (i < MAX_LINES &&
+    while (i < MAX_MAPS_LINES &&
            fscanf(file, "%s %s %lx %d:%d %d %[^\n]", address_range, perms,
                   &offset, &dev_major, &dev_minor, &inode, pathname) >= 4) {
 
