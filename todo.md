@@ -3,13 +3,14 @@
 
 
 # IN PROGRESS
-## from cmd loop to cmd as shortcut and to always display scrollable search state
-## Double Buffering for avoiding flickering on terminal
-## Side bar with current search state
+## lowe higher
+## Full memory load for higher lower
 
 
 
 # DONE
+## from cmd loop to cmd as shortcut and to always display scrollable search state
+## Double Buffering for avoiding flickering on terminal
 # Work around limitation of the iovec.
         Max iovec is 1024 so cannot used to store values
         need to use custom data structure and use scatter gather always requesting the all regions

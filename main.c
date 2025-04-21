@@ -20,8 +20,8 @@
 #define MEEMO_VERSION "0.0.1"
 
 /*Reading maps*/
-#define MAX_STR_LEN_MAPS_COL 128
-#define MAX_MAPS_LINES 1024
+#define MAX_STR_LEN_MAPS_COL 256
+#define MAX_MAPS_LINES 2048
 
 /*IOVEC*/
 #define INITIAL_IOVEC_ARRAY_CAP 64
