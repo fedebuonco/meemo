@@ -2,7 +2,7 @@
 meemo is a 1kLOC memory scanner.  
 It has no third party dependencies (not even curses).
 
-TODO add gif showing it
+![](meemo_logo.png)
 
 When I was a kid I loved playing "3D Pinball for Windows – Space Cadet" on windows xp.  
 To have the highscore in the house, I started using [cheat engine](https://www.cheatengine.org/).  
