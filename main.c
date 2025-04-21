@@ -164,7 +164,7 @@ void fb_swap(FrameBuffer* fb) {
             int y = i / fb->width;
             printf("\033[?25l");  // Hide the cursor
             printf("\033[%d;%dH%c", y + 1, x + 1,
-                   fb->back[i]);  // Cursor to home TODO
+                   fb->back[i]);  // Cursor to home
             fb->front[i] = fb->back[i];
         }
     }
@@ -239,8 +239,8 @@ void add_iovec(DIA* dia, struct iovec value) {
 }
 
 void free_iovec_array(DIA* arr, int is_local) {
-    if(is_local){
-        for (int i = 0; i < arr->size; i++){
+    if (is_local) {
+        for (int i = 0; i < arr->size; i++) {
             free(arr->data[i].iov_base);
         }
     }
@@ -474,8 +474,8 @@ int fill_remote_dia(DIA* remote, FILE* file) {
 }
 
 void advance_state(SearchState* sstate) {
-    free_iovec_array(sstate->remote,0);
-    free_iovec_array(sstate->local,1);
+    free_iovec_array(sstate->remote, 0);
+    free_iovec_array(sstate->local, 1);
 
     sstate->remote = sstate->next_remote;
     sstate->local = init_iovec_array(sstate->remote->size);
@@ -485,7 +485,7 @@ void advance_state(SearchState* sstate) {
 }
 
 void reset_current_state(SearchState* sstate) {
-    free_iovec_array(sstate->local,1);
+    free_iovec_array(sstate->local, 1);
     free_iovec_array(sstate->next_remote, 0);
 
     sstate->local = init_iovec_array(sstate->remote->size);
