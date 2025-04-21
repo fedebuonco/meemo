@@ -229,8 +229,7 @@ void add_iovec(DIA* dia, struct iovec value) {
         struct iovec* new_data =
             realloc(dia->data, dia->capacity * sizeof(struct iovec));
         if (!new_data) {
-            // TODO
-            perror("Failed to reallocate memory");
+            perror("Failed to reallocate memory for the dynamic iovec array");
             exit(EXIT_FAILURE);
         }
         dia->data = new_data;
@@ -239,7 +238,12 @@ void add_iovec(DIA* dia, struct iovec value) {
     dia->data[dia->size++] = value;
 }
 
-void free_iovec_array(DIA* arr) {
+void free_iovec_array(DIA* arr, int is_local) {
+    if(is_local){
+        for (int i = 0; i < arr->size; i++){
+            free(arr->data[i].iov_base);
+        }
+    }
     free(arr->data);
     arr->data = NULL;
     arr->size = 0;
@@ -391,10 +395,11 @@ typedef struct SearchState {
     The local dia iovec's are allocated inside.
 */
 ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
-    for (size_t i = 0; i < rdia->size; i++) {
+    size_t i = 0;
+    for (; i < rdia->size; i++) {
         void* buffer = malloc(rdia->data[i].iov_len);
         if (!buffer) {
-            // TODO how to exit? Probably need to show it better than this.
+            perror("Failure to read from remote dia");
             exit(EXIT_FAILURE);
         }
         struct iovec local_iov = {.iov_base = buffer,
@@ -469,8 +474,8 @@ int fill_remote_dia(DIA* remote, FILE* file) {
 }
 
 void advance_state(SearchState* sstate) {
-    free_iovec_array(sstate->remote);
-    free_iovec_array(sstate->local);
+    free_iovec_array(sstate->remote,0);
+    free_iovec_array(sstate->local,1);
 
     sstate->remote = sstate->next_remote;
     sstate->local = init_iovec_array(sstate->remote->size);
@@ -480,8 +485,8 @@ void advance_state(SearchState* sstate) {
 }
 
 void reset_current_state(SearchState* sstate) {
-    free_iovec_array(sstate->local);
-    free_iovec_array(sstate->next_remote);
+    free_iovec_array(sstate->local,1);
+    free_iovec_array(sstate->next_remote, 0);
 
     sstate->local = init_iovec_array(sstate->remote->size);
 
@@ -578,6 +583,7 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
                 return;
             }
+            free(s_subcmd);
             sstate->searched = &search_value;
             size_t found = search_step_dia(sstate);
             if (found == 0) {
@@ -598,6 +604,7 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
                 return;
             }
+            free(w_subcmd);
             write_value_at_pos(sstate, pos, value);
             static const char* wr = "Written...";
             fb_putstr(fb, 0, 2, wr);
