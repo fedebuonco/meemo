@@ -3,7 +3,8 @@
 
 
 # IN PROGRESS
-## lowe higher
+## Only laod writable regions. heap stack data and bss.
+## lower higher search
 ## Full memory load for higher lower
 
 
