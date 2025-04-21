@@ -21,7 +21,7 @@
 
 #define MAX_LINES 500
 #define MAX_STR_LEN 500
-#define INITIAL_IOVEC_ARRAY_CAP 128
+#define INITIAL_IOVEC_ARRAY_CAP 64
 #define WRITE_ASK 10
 #define IOV_MAX_BATCH 1024
 
@@ -29,7 +29,8 @@
 #define IOVEC_MAX_STR 32
 
 /*UI Strings*/
-#define SUBCMD_PROMPT "\033[1;33mMeemo>\033[0m "
+#define SEARCH_STR "\033[1;33m(search)\033[0m "
+#define WRITE_STR "\033[1;33m(write)\033[0m "
 
 /* Search State*/
 typedef struct SearchState SearchState;
@@ -52,10 +53,9 @@ void disable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-void enable_raw_mode(void) {
+int enable_raw_mode(void) {
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
-        perror("tcgetattr: failed to read terminal attributes");
-        exit(EXIT_FAILURE);
+        goto raw_e;
     }
 
     atexit(disable_raw_mode);
@@ -66,9 +66,12 @@ void enable_raw_mode(void) {
     raw.c_cc[VTIME] = 0;
 
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-        perror("tcsetattr: failed to apply raw mode");
-        exit(EXIT_FAILURE);
-    } 
+        goto raw_e;
+    }
+
+raw_e:
+    errno = ENOTTY;
+    return -1;
 }
 
 int keypress(void) {
@@ -91,6 +94,7 @@ int process_input(FrameBuffer* fb, SearchState* sstate) {
 
 void update_terminal_size(void) {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
+        perror("Error while updating the terminal size");
         exit(1);
     }
 }
@@ -136,8 +140,7 @@ void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
         if (*str == '\n') {
             cx = x;
             cy++;
-        } 
-        else {
+        } else {
             fb_putchar(fb, cx, cy, *str);
             cx++;
             if (cx >= fb->width) {  // Wrap line if needed
@@ -210,7 +213,7 @@ DIA* init_iovec_array(size_t initial_capacity) {
     arr->capacity = initial_capacity;
     arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
     if (!arr->data) {
-        perror("Failed to allocate memory");
+        perror("Failed to allocate memory for a dynamic iovec array.");
         exit(EXIT_FAILURE);
     }
     return arr;
@@ -245,8 +248,10 @@ void free_iovec_array(DIA* arr) {
 
 char* string_iovec(const struct iovec* io) {
     char* iovec_str = malloc(IOVEC_MAX_STR);
-    if (!iovec_str) return NULL;
-    int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d", io->iov_base, (int)io->iov_len);
+    if (!iovec_str)
+        return NULL;
+    int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d",
+                           io->iov_base, (int)io->iov_len);
     if (written < 0 || written >= IOVEC_MAX_STR) {
         free(iovec_str);
         return NULL;
@@ -263,7 +268,6 @@ char* string_dia(const DIA* arr, size_t max_elem) {
         return NULL;
     }
 
-    
     char* p = dia_str;
     for (size_t i = 0; i < min; i++) {
         char* iovec_str = string_iovec(&arr->data[i]);
@@ -271,22 +275,23 @@ char* string_dia(const DIA* arr, size_t max_elem) {
             free(dia_str);
             return NULL;
         }
-        int written = snprintf(p,50, "\n[%zu] = %s", i, iovec_str);
+        int written = snprintf(p, 50, "\n[%zu] = %s", i, iovec_str);
         free(iovec_str);
         if (written < 0 || written >= 50) {
             free(dia_str);
             return NULL;
         }
-        p+=written;
+        p += written;
     }
 
-    if (min< arr->size){
-        int written = snprintf(p,50, "\nAnd %zu more. Refine the search.", arr->size -min);
+    if (min < arr->size) {
+        int written = snprintf(p, 50, "\nAnd %zu more. Refine the search.",
+                               arr->size - min);
         if (written < 0 || written >= 50) {
             free(dia_str);
             return NULL;
         }
-        p+=written;
+        p += written;
     }
 
     *p = '\0';
@@ -365,7 +370,8 @@ typedef enum {
     TYPE_INT_64,
     TYPE_UINT_32,
     TYPE_UINT_64,
-    TYPE_CHAR
+    TYPE_CHAR,
+    TYPE_NONE,
 } SearchDataType;
 
 typedef struct SearchState {
@@ -512,10 +518,10 @@ size_t search_step_dia(SearchState* sstate) {
 }
 
 char* string_search_state(SearchState* sstate) {
-    if (sstate == NULL){
+    if (sstate == NULL) {
         return NULL;
     }
-   return string_dia(sstate->remote, ws.ws_row - 8);
+    return string_dia(sstate->remote, ws.ws_row - 8);
 }
 
 void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
@@ -538,18 +544,17 @@ void write_value_at_pos(SearchState* sstate, size_t pos, int32_t value) {
 }
 
 /*Will remove raw_mode, and get input at a specific location in the ui.*/
-char* get_input_in_cmdbar(void) {
+char* get_input_in_cmdbar(char* ps1) {
     int input_row = ws.ws_row - 1;
     int input_col_ps1 = 0;
-    int input_col_cmd = 8;  
+    int input_col_cmd = 10;
     char* buffer = malloc(256 * sizeof(char));
 
-    
     disable_raw_mode();
-    
+
     MOVE_CURSOR(input_row, input_col_ps1);
-    printf(SUBCMD_PROMPT);
-  
+    printf("%s", ps1);
+
     MOVE_CURSOR(input_row, input_col_cmd);
     fgets(buffer, sizeof(buffer), stdin);
 
@@ -568,15 +573,17 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
     fb_clear_rows(fb, 2, fb->height - 1);
     switch (cmd) {
         case 's':;
-            char* s_subcmd = get_input_in_cmdbar();
+            char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
             int32_t search_value;
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
                 return;
             }
             sstate->searched = &search_value;
             size_t found = search_step_dia(sstate);
-            if (found == 0){
-                static const char * nf = "Not Found. Search State has not advanced. Displaying previous state:";
+            if (found == 0) {
+                static const char* nf =
+                    "Not Found. Search State has not advanced. Displaying "
+                    "previous state:";
                 fb_putstr(fb, 0, 2, nf);
             }
             // INTENTIONAL FALLTROUGH
@@ -585,14 +592,14 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             fb_putstr(fb, 0, 3, search_state);
             break;
         case 'w':;
-            char* w_subcmd = get_input_in_cmdbar();
+            char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
             size_t pos;
             int32_t value;
             if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
                 return;
             }
             write_value_at_pos(sstate, pos, value);
-            static const char * wr = "Written...";
+            static const char* wr = "Written...";
             fb_putstr(fb, 0, 2, wr);
             break;
         case 'q':  //quit
@@ -600,11 +607,22 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
             printf(SHOW_CURSOR);
             disable_raw_mode();
             printf("\nQuitting...");
-            exit(0);
+            exit(EXIT_SUCCESS);
             break;
         default:
             // TODO Add to content that the command was not recogn
             break;
+    }
+}
+
+void setup_terminal_resize_sig(void) {
+    // config signal for terminal resize
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sa.sa_handler = sigwinchHandler;
+    if (sigaction(SIGWINCH, &sa, NULL) == -1) {
+        perror("Failure to setup terminal resize signal");
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -618,73 +636,56 @@ void draw(FrameBuffer* fb) {
 int main(int argc, char** argv) {
     if (argc != 2) {
         fprintf(stderr, "\nUsage: meemo <pid>");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sa.sa_handler = sigwinchHandler;
-    if (sigaction(SIGWINCH, &sa, NULL) == -1) {
-        exit(1);
+    setup_terminal_resize_sig();
+
+    // parse and validate pid
+    pid_t input_pid;
+    if (sscanf(argv[1], "%d", &input_pid) != 1 || input_pid <= 0) {
+        fprintf(stderr, "\nInvalid PID. Cannot parse a valid pid value.");
+        exit(EXIT_FAILURE);
     }
 
-    // Parse and validate PID
-    pid_t user_input_pid;
-    if (sscanf(argv[1], "%d", &user_input_pid) != 1) {
-        printf("\nInvalid PID input.");
-        return 1;
-    }
-    if (user_input_pid <= 0) {
-        printf("\nInvalid PID value.");
-        return 1;
-    }
-    // printf("\nInput PID = %d", user_input_pid);
-
-    // Read maps of process
-    char path[50];
-    sprintf(path, "/proc/%d/maps", user_input_pid);
+    // read maps of process
+    char path[32];
+    sprintf(path, "/proc/%d/maps", input_pid);
     FILE* file = fopen(path, "r");
     if (!file) {
-        perror("Error opening file");
-        return 1;
+        perror("Error reading /proc/<PID>/maps file.");
+        exit(EXIT_FAILURE);
     }
 
     // Setup initial Search State
-    SearchDataType type = TYPE_UINT_32;
     DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-    int n = fill_remote_dia(remote, file);
-    DIA* local = init_iovec_array(n);
-    DIA* next_remote = NULL;
-    DIA* next_local = NULL;
+    int n_maps = fill_remote_dia(remote, file);
+    DIA* local = init_iovec_array(n_maps);
 
-    SearchState initial_sstate = {local,          remote, next_local,
-                                  next_remote,    type,   NULL,
-                                  user_input_pid, file,   0};
+    SearchState initial_sstate = {local, remote,    NULL, NULL, TYPE_UINT_32,
+                                  NULL,  input_pid, file, 0};
 
-    // Main Render loop
     enable_raw_mode();
     update_terminal_size();
 
     FrameBuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
     printf(CLEAR_SCREEN);
-    while (1) {
 
-        // Check if in need of a resize
+    // Main Render loop
+    while (1) {
         if (fb_need_resize) {
             printf(CLEAR_SCREEN);
             update_terminal_size();
-            // Free old and create new TODO realloc?
+            // TODO realloc?
             free_fb(&current_buffer);
             current_buffer = init_fb(ws.ws_col, ws.ws_row);
             fb_need_resize = 0;
         }
 
-        // Draw buffer for frame x
-        // Input that changes the buffer for frame x+1
-        // Wait
-        draw(&current_buffer);
-        process_input(&current_buffer, &initial_sstate);
-        usleep(10000);  //TODO find acceptable refresh rate
+        draw(&current_buffer); /*draw frame x*/
+        process_input(&current_buffer,
+                      &initial_sstate); /* modify buffer for frame x+1*/
+        usleep(10000);
     }
 
     fclose(file);
