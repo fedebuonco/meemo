@@ -92,6 +92,7 @@ int process_input(FrameBuffer* fb, SearchState* sstate) {
     return 0;
 }
 
+/* use ioctl to read the current terminal size */
 void update_terminal_size(void) {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
         perror("Error while updating the terminal size");
@@ -99,6 +100,11 @@ void update_terminal_size(void) {
     }
 }
 
+/* 
+    use double buffering to prevent flicker.
+    write in the back.
+    if different from front, update and draw.
+*/
 typedef struct FrameBuffer {
     int width;
     int height;
