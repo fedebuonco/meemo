@@ -392,7 +392,6 @@ typedef struct SearchState {
     SearchDataType type;
     void* searched;
     pid_t pid;
-    FILE* file;
     int search_cnt;
 } SearchState;
 
@@ -456,7 +455,19 @@ ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     return nwrite;
 }
 
-int fill_remote_dia(DIA* remote, FILE* file) {
+/* 
+    Does the initial fill of the remote dia.
+    Reads the 
+*/
+int fill_remote_dia(DIA* remote, pid_t pid) {
+        char path[32];
+        sprintf(path, "/proc/%d/maps", pid);
+        FILE* file = fopen(path, "r");
+        if (!file) {
+            perror("Error reading /proc/<PID>/maps file.");
+            exit(EXIT_FAILURE);
+        }
+    
     char address_range[MAX_STR_LEN_MAPS_COL], perms[MAX_STR_LEN_MAPS_COL],
         pathname[MAX_STR_LEN_MAPS_COL];
     int dev_major, dev_minor, inode;
@@ -477,6 +488,7 @@ int fill_remote_dia(DIA* remote, FILE* file) {
 
         i++;
     }
+    fclose(file);
     return i;
 }
 
@@ -647,37 +659,30 @@ void draw(FrameBuffer* fb) {
     fb_swap(fb);
 }
 
+/* 
+    Parse the pid and validate it.
+    Setup the initial search state.
+    Run the  render loop.    
+*/
 int main(int argc, char** argv) {
     if (argc != 2) {
         fprintf(stderr, "\nUsage: meemo <pid>");
         exit(EXIT_FAILURE);
     }
-
-    setup_terminal_resize_sig();
-
-    // parse and validate pid
     pid_t input_pid;
     if (sscanf(argv[1], "%d", &input_pid) != 1 || input_pid <= 0) {
         fprintf(stderr, "\nInvalid PID. Cannot parse a valid pid value.");
         exit(EXIT_FAILURE);
     }
 
-    // read maps of process
-    char path[32];
-    sprintf(path, "/proc/%d/maps", input_pid);
-    FILE* file = fopen(path, "r");
-    if (!file) {
-        perror("Error reading /proc/<PID>/maps file.");
-        exit(EXIT_FAILURE);
-    }
+    setup_terminal_resize_sig();
 
-    // Setup initial Search State
     DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-    int n_maps = fill_remote_dia(remote, file);
-    DIA* local = init_iovec_array(n_maps);
+    int regions = fill_remote_dia(remote, input_pid);
+    DIA* local = init_iovec_array(regions);
 
     SearchState initial_sstate = {local, remote,    NULL, NULL, TYPE_UINT_32,
-                                  NULL,  input_pid, file, 0};
+                                  NULL,  input_pid, 0};
 
     enable_raw_mode();
     update_terminal_size();
@@ -685,7 +690,7 @@ int main(int argc, char** argv) {
     FrameBuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
     printf(CLEAR_SCREEN);
 
-    // Main Render loop
+    /* Main Render loop */
     while (1) {
         if (fb_need_resize) {
             printf(CLEAR_SCREEN);
@@ -699,9 +704,8 @@ int main(int argc, char** argv) {
         draw(&current_buffer); /*draw frame x*/
         process_input(&current_buffer,
                       &initial_sstate); /* modify buffer for frame x+1*/
-        usleep(10000);
+        usleep(100000);
     }
 
-    fclose(file);
     return 0;
 }
