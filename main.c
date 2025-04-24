@@ -30,7 +30,7 @@
 /*UI Strings*/
 #define SEARCH_STR "\033[1;33m(search)\033[0m "
 #define WRITE_STR "\033[1;33m(write)\033[0m "
-#define IOVEC_MAX_STR 32
+#define IOVEC_MAX_STR 128
 
 /* Terminal */
 #define MOVE_CURSOR(row, col) printf("\033[%d;%dH", (row), (col))
@@ -478,6 +478,9 @@ int fill_remote_dia(DIA* remote, pid_t pid) {
            fscanf(file, "%s %s %lx %d:%d %d %[^\n]", address_range, perms,
                   &offset, &dev_major, &dev_minor, &inode, pathname) >= 4) {
 
+        /*only load those with rw--*/
+        if (perms[0] != 'r' || perms[1] != 'w') continue;
+        
         uintptr_t start, end;
         sscanf(address_range, "%lx-%lx", &start, &end);
 

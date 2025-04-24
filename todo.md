@@ -3,7 +3,8 @@
 
 
 # IN PROGRESS
-## Only laod writable regions. heap stack data and bss.
+## Only laod writable regions. heap stack data and bss. Also the region must be read at every search. they might grow...
+## Display also values, better print
 ## lower higher search
 ## Full memory load for higher lower
 
