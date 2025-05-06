@@ -74,15 +74,19 @@ raw_e:
     return -1;
 }
 
+/* 
+    Use select to check stdin in a non-blocking way. 
+    Use set of fd but only fills it with stdin.
+*/
 int keypress(void) {
-    struct timeval tv = {0, 0};
+    struct timeval tv = {0, 0};  /* make select non-blocking */
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
 }
 
-/*TODO: Add Enum for keypresses*/
+/* Check if keypress and switches on it to execute corresponding cmd. */
 int process_input(FrameBuffer* fb, SearchState* sstate) {
     if (keypress()) {
         char c;
@@ -93,7 +97,7 @@ int process_input(FrameBuffer* fb, SearchState* sstate) {
     return 0;
 }
 
-/* use ioctl to read the current terminal size */
+/* Use ioctl to read the current terminal size */
 void update_terminal_size(void) {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
         perror("Error while updating the terminal size");
@@ -102,9 +106,9 @@ void update_terminal_size(void) {
 }
 
 /* 
-    use double buffering to prevent flicker.
-    write in the back.
-    if different from front, update and draw.
+    Double buffered frame buffer.
+    Use double buffering to prevent flicker.
+    Write in the back, if different from front, update.
 */
 typedef struct FrameBuffer {
     int width;
@@ -113,6 +117,7 @@ typedef struct FrameBuffer {
     char* back;
 } FrameBuffer;
 
+/* Creates the FrameBuffer of given size and clear both front and back*/
 FrameBuffer init_fb(int width, int height) {
     FrameBuffer fb;
     fb.width = width;
@@ -130,40 +135,49 @@ void free_fb(FrameBuffer* fb) {
     free(fb->back);
 }
 
-/* Put the char in back buffer at (x,y) so that at draw time it will only be displayed if != front*/
+/* Put a single char in back buffer at (x,y) so that at draw time it will only be displayed if != front*/
 void fb_putchar(FrameBuffer* fb, int x, int y, char ch) {
     if (x < 0 || x >= fb->width || y < 0 || y >= fb->height) {
+        /* not an error, do not render if not possible to fit everything */
         return;
     }
     fb->back[(y * fb->width) + x] = ch;
 }
 
-/* Put a string with possibility of using \n.*/
+/* 
+    Dumb function to put a string. 
+    Supports only the \n.
+*/
 void fb_putstr(FrameBuffer* fb, int x, int y, const char* str) {
     int cx = x;
     int cy = y;
 
+    /* cycle trouth the string */
     while (*str) {
-        if (*str == '\n') {
+        if (*str == '\n') { /* next row, same starting col */
             cx = x;
             cy++;
         } else {
             fb_putchar(fb, cx, cy, *str);
             cx++;
-            if (cx >= fb->width) {  // Wrap line if needed
+            if (cx >= fb->width) {  /* wrap */
                 cx = x;
                 cy++;
             }
         }
 
-        if (cy >= fb->height) {
+        if (cy >= fb->height) { /* stay in framebuffer */
             break;
         }
         str++;
     }
 }
 
-/* Draw only the char that are different from front.*/
+/* 
+    Drawing function.
+    Check for each cell if front != back.
+    If it is then use ANSI escape code to redraw it.
+*/
 void fb_swap(FrameBuffer* fb) {
     for (int i = 0; i < fb->width * fb->height; ++i) {
         if (fb->front[i] != fb->back[i]) {
@@ -171,7 +185,7 @@ void fb_swap(FrameBuffer* fb) {
             int y = i / fb->width;
             printf("\033[?25l");  // Hide the cursor
             printf("\033[%d;%dH%c", y + 1, x + 1,
-                   fb->back[i]);  // Cursor to home
+                   fb->back[i]);
             fb->front[i] = fb->back[i];
         }
     }
@@ -192,7 +206,7 @@ void add_header(FrameBuffer* fb) {
 
 /*  Create the footer */
 void add_footer(FrameBuffer* fb) {
-    static const char* cmds = " s: search | p: print | w: write | q: quit ";
+    static const char* cmds = " s: search <value> | p: print | w: write <pos> <value> | r: reset  | q: quit ";
     size_t i = 0;
     for (; i < strlen(cmds); i++) {
         fb_putchar(fb, (int)i, fb->height - 1, cmds[i]);
@@ -202,8 +216,8 @@ void add_footer(FrameBuffer* fb) {
     }
 }
 
+/* When sigwinch triggered, we are in need of a resize */
 volatile sig_atomic_t fb_need_resize = 0;
-
 static void sigwinchHandler(int sig) {
     (void)sig;
     fb_need_resize = 1;
