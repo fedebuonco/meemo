@@ -82,6 +82,7 @@ int keypress(void) {
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
 }
 
+/*TODO: Add Enum for keypresses*/
 int process_input(FrameBuffer* fb, SearchState* sstate) {
     if (keypress()) {
         char c;
@@ -177,6 +178,7 @@ void fb_swap(FrameBuffer* fb) {
     fflush(stdout);
 }
 
+/*  Create the header */
 void add_header(FrameBuffer* fb) {
     static const char* title = "Meemo " MEEMO_VERSION;
     size_t i = 0;
@@ -188,6 +190,7 @@ void add_header(FrameBuffer* fb) {
     }
 }
 
+/*  Create the footer */
 void add_footer(FrameBuffer* fb) {
     static const char* cmds = " s: search | p: print | w: write | q: quit ";
     size_t i = 0;
@@ -258,8 +261,9 @@ void free_iovec_array(DIA* arr, int is_local) {
 
 char* string_iovec(const struct iovec* io) {
     char* iovec_str = malloc(IOVEC_MAX_STR);
-    if (!iovec_str)
+    if (!iovec_str){
         return NULL;
+    }
     int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d",
                            io->iov_base, (int)io->iov_len);
     if (written < 0 || written >= IOVEC_MAX_STR) {
@@ -384,6 +388,7 @@ typedef enum {
     TYPE_NONE,
 } SearchDataType;
 
+/* Represents the current state of a search */
 typedef struct SearchState {
     DIA* local;
     DIA* remote;
@@ -418,7 +423,7 @@ ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
     return nread;
 }
 
-/*  Clears from start_row to end_row */
+/*  Clears the framebuffer from start_row to end_row */
 void fb_clear_rows(FrameBuffer* fb, int start_row, int end_row) {
     int i = (start_row * fb->width);
     for (; i <= end_row * fb->width; i++) {
@@ -456,10 +461,9 @@ ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 }
 
 /* 
-    Does the initial fill of the remote dia.
-    Reads the 
+   Read the maps file of a process and stores them into a dia. 
 */
-int fill_remote_dia(DIA* remote, pid_t pid) {
+int read_maps_into_dia(DIA* remote, pid_t pid) {
         char path[32];
         sprintf(path, "/proc/%d/maps", pid);
         FILE* file = fopen(path, "r");
@@ -478,7 +482,7 @@ int fill_remote_dia(DIA* remote, pid_t pid) {
            fscanf(file, "%s %s %lx %d:%d %d %[^\n]", address_range, perms,
                   &offset, &dev_major, &dev_minor, &inode, pathname) >= 4) {
 
-        /*only load those with rw--*/
+        /* only load those with rw-- */
         if (perms[0] != 'r' || perms[1] != 'w') continue;
         
         uintptr_t start, end;
@@ -491,6 +495,7 @@ int fill_remote_dia(DIA* remote, pid_t pid) {
 
         i++;
     }
+
     fclose(file);
     return i;
 }
@@ -615,7 +620,7 @@ void handle_cmd(FrameBuffer* fb, SearchState* sstate, char cmd) {
                 fb_putstr(fb, 0, 2, nf);
             }
             // INTENTIONAL FALLTROUGH
-        case 'p':
+        case 'p':;
             char* search_state = string_search_state(sstate);
             fb_putstr(fb, 0, 3, search_state);
             break;
@@ -681,7 +686,7 @@ int main(int argc, char** argv) {
     setup_terminal_resize_sig();
 
     DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
-    int regions = fill_remote_dia(remote, input_pid);
+    int regions = read_maps_into_dia(remote, input_pid);
     DIA* local = init_iovec_array(regions);
 
     SearchState initial_sstate = {local, remote,    NULL, NULL, TYPE_UINT_32,
