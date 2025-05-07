@@ -1,11 +1,10 @@
-#include <bits/posix1_lim.h>
-#include <bits/types/struct_iovec.h>
+#define _GNU_SOURCE
 #include <complex.h>
 #include <stddef.h>
 #include <sys/select.h>
-#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -125,6 +124,10 @@ FrameBuffer init_fb(int width, int height) {
     size_t size = (long)fb.width * fb.height;
     fb.front = calloc(size, sizeof(char));
     fb.back = calloc(size, sizeof(char));
+    if (fb.front ==NULL  || fb.back==NULL ) {
+        perror("Calloc for framebuffer init failed");
+        exit(1);
+    }
     return fb;
 }
 
