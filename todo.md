@@ -3,15 +3,16 @@
 
 
 # IN PROGRESS
-## Only laod writable regions. heap stack data and bss. Also the region must be read at every search. they might grow...
 ## Display also values, better print
 ## lower higher search
-## Full memory load for higher lower
+## Initial unkownw search for higher lower
 
 
 
 # DONE
 ## from cmd loop to cmd as shortcut and to always display scrollable search state
+## Only laod writable regions. heap stack data and bss. Also the region must be read at every search. they might grow...
+        Fake not needed. just initial read is ok
 ## Double Buffering for avoiding flickering on terminal
 # Work around limitation of the iovec.
         Max iovec is 1024 so cannot used to store values
