@@ -1,5 +1,4 @@
 #define _GNU_SOURCE
-#include <complex.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -37,10 +36,10 @@
 #define CLEAR_SCREEN "\033[2J"
 
 /* Search State*/
-typedef struct searchstate searchstate;
-typedef struct framebuffer framebuffer;
+typedef struct searchState searchState;
+typedef struct frameBuffer frameBuffer;
 
-void handle_cmd(framebuffer* fb, searchstate* sstate, char cmd);
+void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd);
 
 struct winsize ws;
 struct sigaction sa;
@@ -67,6 +66,7 @@ int enable_raw_mode(void) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
         goto raw_e;
     }
+    return 0;
 
 raw_e:
     errno = ENOTTY;
@@ -86,7 +86,7 @@ int keypress(void) {
 }
 
 /* Check if keypress and switches on it to execute corresponding cmd. */
-int process_input(framebuffer* fb, searchstate* sstate) {
+int process_input(frameBuffer* fb, searchState* sstate) {
     if (keypress()) {
         char c;
         if (read(STDIN_FILENO, &c, 1) == 1) {
@@ -109,29 +109,29 @@ void update_terminal_size(void) {
     Use double buffering to prevent flicker.
     Write in the back, if different from front, update.
 */
-typedef struct framebuffer {
+typedef struct frameBuffer {
     int width;
     int height;
     char* front;
     char* back;
-} framebuffer;
+} frameBuffer;
 
-/* Creates the framebuffer of given size and clear both front and back*/
-framebuffer init_fb(int width, int height) {
-    framebuffer fb;
+/* Creates the frameBuffer of given size and clear both front and back*/
+frameBuffer init_fb(int width, int height) {
+    frameBuffer fb;
     fb.width = width;
     fb.height = height;
     size_t size = (long)fb.width * fb.height;
     fb.front = calloc(size, sizeof(char));
     fb.back = calloc(size, sizeof(char));
     if (fb.front == NULL || fb.back == NULL) {
-        perror("Calloc for framebuffer init failed");
+        perror("Calloc for frameBuffer init failed");
         exit(1);
     }
     return fb;
 }
 
-void free_fb(framebuffer* fb) {
+void free_fb(frameBuffer* fb) {
     fb->width = 0;
     fb->height = 0;
     free(fb->front);
@@ -139,7 +139,7 @@ void free_fb(framebuffer* fb) {
 }
 
 /* Put a single char in back buffer at (x,y) so that at draw time it will only be displayed if != front*/
-void fb_putchar(framebuffer* fb, int x, int y, char ch) {
+void fb_putchar(frameBuffer* fb, int x, int y, char ch) {
     if (x < 0 || x >= fb->width || y < 0 || y >= fb->height) {
         /* not an error, do not render if not possible to fit everything */
         return;
@@ -151,7 +151,7 @@ void fb_putchar(framebuffer* fb, int x, int y, char ch) {
     Dumb function to put a string. 
     Supports only the \n.
 */
-void fb_putstr(framebuffer* fb, int x, int y, const char* str) {
+void fb_putstr(frameBuffer* fb, int x, int y, const char* str) {
     int cx = x;
     int cy = y;
 
@@ -169,7 +169,7 @@ void fb_putstr(framebuffer* fb, int x, int y, const char* str) {
             }
         }
 
-        if (cy >= fb->height) { /* stay in framebuffer */
+        if (cy >= fb->height) { /* stay in frameBuffer */
             break;
         }
         str++;
@@ -181,7 +181,7 @@ void fb_putstr(framebuffer* fb, int x, int y, const char* str) {
     Check for each cell if front != back.
     If it is then use ANSI escape code to redraw it.
 */
-void fb_swap(framebuffer* fb) {
+void fb_swap(frameBuffer* fb) {
     for (int i = 0; i < fb->width * fb->height; ++i) {
         if (fb->front[i] != fb->back[i]) {
             int x = i % fb->width;
@@ -195,7 +195,7 @@ void fb_swap(framebuffer* fb) {
 }
 
 /*  Create the header */
-void add_header(framebuffer* fb) {
+void add_header(frameBuffer* fb) {
     static const char* title = "Meemo " MEEMO_VERSION;
     size_t i = 0;
     for (; i < strlen(title); ++i) {
@@ -207,7 +207,7 @@ void add_header(framebuffer* fb) {
 }
 
 /*  Create the footer */
-void add_footer(framebuffer* fb) {
+void add_footer(frameBuffer* fb) {
     static const char* cmds =
         " s: search <value> | p: print | w: write <pos> <value> | r: reset  | "
         "q: quit ";
@@ -232,10 +232,10 @@ typedef struct {
     struct iovec* data;
     size_t size;
     size_t capacity;
-} DIA;
+} dia;
 
-DIA* init_iovec_array(size_t initial_capacity) {
-    DIA* arr = malloc(sizeof(DIA));
+dia* init_iovec_array(size_t initial_capacity) {
+    dia* arr = malloc(sizeof(dia));
     arr->size = 0;
     arr->capacity = initial_capacity;
     arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
@@ -250,7 +250,7 @@ DIA* init_iovec_array(size_t initial_capacity) {
     Add an iovec to the the DIA.
     Uses a simple dynamic array approach where we x2 everytime we need more space.
 */
-void add_iovec(DIA* dia, struct iovec value) {
+void add_iovec(dia* dia, struct iovec value) {
     if (dia->size == dia->capacity) {
         dia->capacity *= 2;
         struct iovec* new_data =
@@ -265,7 +265,8 @@ void add_iovec(DIA* dia, struct iovec value) {
     dia->data[dia->size++] = value;
 }
 
-void free_iovec_array(DIA* arr, int is_local) {
+/* Assume that each iov_base has been allocated with malloc and needs freeing*/
+void free_iovec_array(dia* arr, int is_local) {
     if (is_local) {
         for (int i = 0; i < arr->size; i++) {
             free(arr->data[i].iov_base);
@@ -291,7 +292,7 @@ char* string_iovec(const struct iovec* io) {
     return iovec_str;
 }
 
-char* string_dia(const DIA* arr, size_t max_elem) {
+char* string_dia(const dia* arr, size_t max_elem) {
     size_t min = max_elem <= arr->size ? max_elem : arr->size;
 
     // Need to store enough potentially for all the displayed elements
@@ -339,8 +340,8 @@ char* string_dia(const DIA* arr, size_t max_elem) {
     Scan the local and every find in it put the corresponding
     remote object in the next_remote.
 */
-void search_step_for_uint32_dia(DIA* local, DIA* remote,
-                                DIA* next_remote_iov_array, size_t len,
+void search_step_for_uint32_dia(dia* local, dia* remote,
+                                dia* next_remote_iov_array, size_t len,
                                 uint32_t* searched) {
     // For each region
     for (size_t n_regions = 0; n_regions < len; n_regions++) {
@@ -404,55 +405,56 @@ typedef enum {
     TYPE_UINT_64,
     TYPE_CHAR,
     TYPE_NONE,
-} SearchDataType;
+} searchDataType;
 
 /* Represents the current state of a search */
-typedef struct searchstate {
-    DIA* local;
-    DIA* remote;
-    DIA* next_local;
-    DIA* next_remote;
-    SearchDataType type;
+typedef struct searchState {
+    dia* local_dia;
+    dia* remote_dia;
+    dia* next_local_dia;
+    dia* next_remote_dia;
+    searchDataType type;
     void* searched;
     pid_t pid;
     int search_cnt;
-} searchstate;
+} searchState;
 
 /*
     Takes in a remote DIA and reads it in a local DIA.
     The local dia iovec's are allocated inside.
 */
-ssize_t read_from_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
+ssize_t read_from_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     size_t i = 0;
-    for (; i < rdia->size; i++) {
-        void* buffer = malloc(rdia->data[i].iov_len);
+    for (; i < remote_dia->size; i++) {
+        void* buffer = malloc(remote_dia->data[i].iov_len);
         if (!buffer) {
             perror("Failure to read from remote dia");
             exit(EXIT_FAILURE);
         }
         struct iovec local_iov = {.iov_base = buffer,
-                                  .iov_len = rdia->data[i].iov_len};
+                                  .iov_len = remote_dia->data[i].iov_len};
 
-        add_iovec(ldia, local_iov);
+        add_iovec(local_dia, local_iov);
     }
 
-    ssize_t nread = batch_process_vm_readv(pid, ldia->data, ldia->size,
-                                           rdia->data, rdia->size);
+    ssize_t nread =
+        batch_process_vm_readv(pid, local_dia->data, local_dia->size,
+                               remote_dia->data, remote_dia->size);
     return nread;
 }
 
-/*  Clears the framebuffer from start_row to end_row */
-void fb_clear_rows(framebuffer* fb, int start_row, int end_row) {
+/*  Clears the frameBuffer from start_row to end_row */
+void fb_clear_rows(frameBuffer* fb, int start_row, int end_row) {
     int i = (start_row * fb->width);
     for (; i <= end_row * fb->width; i++) {
         fb_putchar(fb, i % fb->width, i / fb->width, ' ');
     }
 }
 
-ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
+ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
 
-    ssize_t nwrite = process_vm_writev(pid, ldia->data, ldia->size, rdia->data,
-                                       rdia->size, 0);
+    ssize_t nwrite = process_vm_writev(pid, local_dia->data, local_dia->size,
+                                       remote_dia->data, remote_dia->size, 0);
     if (nwrite <= 0) {
         switch (errno) {
             case EINVAL:
@@ -481,7 +483,7 @@ ssize_t write_to_remote_dia(pid_t pid, DIA* ldia, DIA* rdia) {
 /* 
    Read the maps file of a process and stores them into a dia. 
 */
-int read_maps_into_dia(DIA* remote, pid_t pid) {
+int read_maps_into_dia(dia* remote, pid_t pid) {
     char path[32];
     sprintf(path, "/proc/%d/maps", pid);
     FILE* file = fopen(path, "r");
@@ -519,47 +521,48 @@ int read_maps_into_dia(DIA* remote, pid_t pid) {
     return i;
 }
 
-void advance_state(searchstate* sstate) {
-    free_iovec_array(sstate->remote, 0);
-    free_iovec_array(sstate->local, 1);
+void advance_state(searchState* sstate) {
+    free_iovec_array(sstate->remote_dia, 0);
+    free_iovec_array(sstate->local_dia, 1);
 
-    sstate->remote = sstate->next_remote;
-    sstate->local = init_iovec_array(sstate->remote->size);
+    sstate->remote_dia = sstate->next_remote_dia;
+    sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
 
-    sstate->next_remote = NULL;
-    sstate->next_local = NULL;
+    sstate->next_remote_dia = NULL;
+    sstate->next_local_dia = NULL;
 }
 
-void reset_current_state(searchstate* sstate) {
-    free_iovec_array(sstate->local, 1);
-    free_iovec_array(sstate->next_remote, 0);
+void reset_current_state(searchState* sstate) {
+    free_iovec_array(sstate->local_dia, 1);
+    free_iovec_array(sstate->next_remote_dia, 0);
 
-    sstate->local = init_iovec_array(sstate->remote->size);
+    sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
 
-    sstate->next_remote = NULL;
-    sstate->next_local = NULL;
+    sstate->next_remote_dia = NULL;
+    sstate->next_local_dia = NULL;
 }
 
 /* 
     Perform a search on sstate->remote and prepare the next step.
     Finally advances the state.
 */
-size_t search_step_dia(searchstate* sstate) {
+size_t search_step_dia(searchState* sstate) {
     // next_remote will be filled for the next step
-    sstate->next_remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    sstate->next_remote_dia = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
     switch (sstate->type) {
         case TYPE_UINT_32:
-            read_from_remote_dia(sstate->pid, sstate->local, sstate->remote);
+            read_from_remote_dia(sstate->pid, sstate->local_dia,
+                                 sstate->remote_dia);
             search_step_for_uint32_dia(
-                sstate->local, sstate->remote, sstate->next_remote,
-                sstate->remote->size, (uint32_t*)sstate->searched);
+                sstate->local_dia, sstate->remote_dia, sstate->next_remote_dia,
+                sstate->remote_dia->size, (uint32_t*)sstate->searched);
             break;
         default:
             // TODO add more types
             break;
     }
 
-    size_t found = sstate->next_remote->size;
+    size_t found = sstate->next_remote_dia->size;
     if (found == 0) {
         reset_current_state(sstate);
     } else {
@@ -568,26 +571,26 @@ size_t search_step_dia(searchstate* sstate) {
     return found;
 }
 
-char* string_search_state(searchstate* sstate) {
+char* string_search_state(searchState* sstate) {
     if (sstate == NULL) {
         return NULL;
     }
-    return string_dia(sstate->remote, ws.ws_row - 8);
+    return string_dia(sstate->remote_dia, ws.ws_row - 8);
 }
 
-void write_value_at_pos(searchstate* sstate, size_t pos, int32_t value) {
-    if (pos >= sstate->remote->size) {
+void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
+    if (pos >= sstate->remote_dia->size) {
         return;
     }
 
-    void* write_ptr = sstate->remote->data[pos].iov_base;
+    void* write_ptr = sstate->remote_dia->data[pos].iov_base;
     // printf("\nWriting at %p ...", write_ptr);
 
-    DIA* temp_write = init_iovec_array(1);
+    dia* temp_write = init_iovec_array(1);
     struct iovec temp = {&value, sizeof(value)};
     add_iovec(temp_write, temp);
 
-    DIA* temp_remote = init_iovec_array(1);
+    dia* temp_remote = init_iovec_array(1);
     struct iovec temp_r = {write_ptr, sizeof(value)};
     add_iovec(temp_remote, temp_r);
 
@@ -619,7 +622,7 @@ char* get_input_in_cmdbar(char* ps1) {
 }
 
 /*Main command loop, parses the various subcommands and then dispatch.*/
-void handle_cmd(framebuffer* fb, searchstate* sstate, char cmd) {
+void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
     // Clear the previous content
     fb_clear_rows(fb, 2, fb->height - 1);
     switch (cmd) {
@@ -680,7 +683,7 @@ void setup_terminal_resize_sig(void) {
 }
 
 /* Create the current buffer by adding he header, content, footer*/
-void draw(framebuffer* fb) {
+void draw(frameBuffer* fb) {
     add_header(fb);
     add_footer(fb);
     fb_swap(fb);
@@ -704,17 +707,17 @@ int main(int argc, char** argv) {
 
     setup_terminal_resize_sig();
 
-    DIA* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    dia* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
     int regions = read_maps_into_dia(remote, input_pid);
-    DIA* local = init_iovec_array(regions);
+    dia* local = init_iovec_array(regions);
 
-    searchstate initial_sstate = {local,        remote, NULL,      NULL,
+    searchState initial_sstate = {local,        remote, NULL,      NULL,
                                   TYPE_UINT_32, NULL,   input_pid, 0};
 
     enable_raw_mode();
     update_terminal_size();
 
-    framebuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
+    frameBuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
     printf(CLEAR_SCREEN);
 
     /* Main Render loop */
