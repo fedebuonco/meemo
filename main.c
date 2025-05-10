@@ -411,7 +411,6 @@ typedef enum {
 typedef struct searchState {
     dia* local_dia;
     dia* remote_dia;
-    dia* next_local_dia;
     dia* next_remote_dia;
     searchDataType type;
     void* searched;
@@ -529,7 +528,6 @@ void advance_state(searchState* sstate) {
     sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
 
     sstate->next_remote_dia = NULL;
-    sstate->next_local_dia = NULL;
 }
 
 void reset_current_state(searchState* sstate) {
@@ -539,7 +537,6 @@ void reset_current_state(searchState* sstate) {
     sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
 
     sstate->next_remote_dia = NULL;
-    sstate->next_local_dia = NULL;
 }
 
 /* 
@@ -711,8 +708,8 @@ int main(int argc, char** argv) {
     int regions = read_maps_into_dia(remote, input_pid);
     dia* local = init_iovec_array(regions);
 
-    searchState initial_sstate = {local,        remote, NULL,      NULL,
-                                  TYPE_UINT_32, NULL,   input_pid, 0};
+    searchState initial_sstate = {local, remote,    NULL, TYPE_UINT_32,
+                                  NULL,  input_pid, 0};
 
     enable_raw_mode();
     update_terminal_size();
