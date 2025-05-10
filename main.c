@@ -39,6 +39,12 @@
 typedef struct searchState searchState;
 typedef struct frameBuffer frameBuffer;
 
+/* Error handling */
+void die(const char* msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
+}
+
 void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd);
 
 struct winsize ws;
@@ -99,8 +105,7 @@ int process_input(frameBuffer* fb, searchState* sstate) {
 /* Use ioctl to read the current terminal size */
 void update_terminal_size(void) {
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1) {
-        perror("Error while updating the terminal size");
-        exit(1);
+        die("Error while updating the terminal size");
     }
 }
 
@@ -125,8 +130,7 @@ frameBuffer init_fb(int width, int height) {
     fb.front = calloc(size, sizeof(char));
     fb.back = calloc(size, sizeof(char));
     if (fb.front == NULL || fb.back == NULL) {
-        perror("Calloc for frameBuffer init failed");
-        exit(1);
+        die("Calloc for frameBuffer init failed");
     }
     return fb;
 }
@@ -240,8 +244,7 @@ dia* init_iovec_array(size_t initial_capacity) {
     arr->capacity = initial_capacity;
     arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
     if (!arr->data) {
-        perror("Failed to allocate memory for a dynamic iovec array.");
-        exit(EXIT_FAILURE);
+        die("Failed to allocate memory for a dynamic iovec array.");
     }
     return arr;
 }
@@ -256,8 +259,7 @@ void add_iovec(dia* dia, struct iovec value) {
         struct iovec* new_data =
             realloc(dia->data, dia->capacity * sizeof(struct iovec));
         if (!new_data) {
-            perror("Failed to reallocate memory for the dynamic iovec array");
-            exit(EXIT_FAILURE);
+            die("Failed to reallocate memory for the dynamic iovec array");
         }
         dia->data = new_data;
     }
@@ -427,8 +429,7 @@ ssize_t read_from_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     for (; i < remote_dia->size; i++) {
         void* buffer = malloc(remote_dia->data[i].iov_len);
         if (!buffer) {
-            perror("Failure to read from remote dia");
-            exit(EXIT_FAILURE);
+            die("Failure to read from remote dia");
         }
         struct iovec local_iov = {.iov_base = buffer,
                                   .iov_len = remote_dia->data[i].iov_len};
@@ -487,8 +488,7 @@ int read_maps_into_dia(dia* remote, pid_t pid) {
     sprintf(path, "/proc/%d/maps", pid);
     FILE* file = fopen(path, "r");
     if (!file) {
-        perror("Error reading /proc/<PID>/maps file.");
-        exit(EXIT_FAILURE);
+        die("Error reading /proc/<PID>/maps file.");
     }
 
     char address_range[MAX_STR_LEN_MAPS_COL], perms[MAX_STR_LEN_MAPS_COL],
@@ -674,8 +674,7 @@ void setup_terminal_resize_sig(void) {
     sa.sa_flags = 0;
     sa.sa_handler = sigwinchHandler;
     if (sigaction(SIGWINCH, &sa, NULL) == -1) {
-        perror("Failure to setup terminal resize signal");
-        exit(EXIT_FAILURE);
+        die("Failure to setup terminal resize signal");
     }
 }
 
