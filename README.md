@@ -20,6 +20,14 @@ More info about them [here](https://man7.org/linux/man-pages/man2/process_vm_rea
 
 `sudo meemo <pid>`
 
+## Demo
+
+<div>
+    <a href="https://www.loom.com/share/c8c17f935bec46959ede0cbcf5281d23">
+      <img style="max-width:300px;" src="https://cdn.loom.com/sessions/thumbnails/c8c17f935bec46959ede0cbcf5281d23-6e31a33a07cc5c2d-full-play.gif">
+    </a>
+  </div>
+
 ## 🗺️ Roadmap
 
 [TODOs](TODO.md)
