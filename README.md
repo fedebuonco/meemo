@@ -22,10 +22,7 @@ More info about them [here](https://man7.org/linux/man-pages/man2/process_vm_rea
 
 ## 🗺️ Roadmap
 
-- Extend the search to allow for other types (int32, int64, etc)
-- Narrow search with multiple iterations using (higher, lower, not, etc)
-- Go back to previous searches
-- Save pointers on a scratchpad
+[TODOs](TODO.md)
 
 ## 💡 Why
 
