@@ -151,7 +151,7 @@ char* get_input_in_cmdbar(char* ps1) {
     printf("%s", ps1);
 
     MOVE_CURSOR(input_row, input_col_cmd);
-    fgets(buffer, sizeof(buffer), stdin);
+    fgets(buffer, 256 * sizeof(buffer), stdin);
 
     enable_raw_mode();
 
@@ -162,7 +162,7 @@ char* get_input_in_cmdbar(char* ps1) {
     return buffer;
 }
 
-dia* init_iovec_array(size_t initial_capacity) {
+dia* init_dia(size_t initial_capacity) {
     dia* arr = malloc(sizeof(dia));
     arr->size = 0;
     arr->capacity = initial_capacity;
@@ -302,7 +302,7 @@ void search_step_for_uint32_dia(dia* local, dia* remote,
             if (val == *searched) {
                 uintptr_t base = (uintptr_t)base_r + offset;
                 struct iovec next_remote_iov = {.iov_base = (void*)base,
-                                                .iov_len = sizeof(int32_t)};
+                                                .iov_len = sizeof(uint32_t)};
 
                 add_iovec(next_remote_iov_array, next_remote_iov);
             }
@@ -310,34 +310,48 @@ void search_step_for_uint32_dia(dia* local, dia* remote,
     }
 }
 
-/* Assume that each iov_base has been allocated with malloc and needs freeing*/
-void free_iovec_array(dia* arr, int is_local) {
-    if (is_local) {
-        for (int i = 0; i < arr->size; i++) {
-            free(arr->data[i].iov_base);
+/*
+    Frees a dia structure and optionally its iov_base members.
+    Set to 1 if iov_base pointers were malloc'd for this dia.
+    Set to 0 if iov_base pointers are managed elsewhere.
+*/
+void free_dia(dia* arr, int free_iov_bases) {
+    if (!arr) {
+        return;
+    }
+
+    if (free_iov_bases) {
+        for (size_t i = 0; i < arr->size; i++) {
+            if (arr->data[i].iov_base) {
+                free(arr->data[i].iov_base);
+                arr->data[i].iov_base = NULL;  // Good practice
+            }
         }
     }
-    free(arr->data);
-    arr->data = NULL;
+    if (arr->data) {
+        free(arr->data);
+        arr->data = NULL;
+    }
     arr->size = 0;
     arr->capacity = 0;
+    free(arr);
 }
 
 void advance_state(searchState* sstate) {
-    free_iovec_array(sstate->remote_dia, 0);
-    free_iovec_array(sstate->local_dia, 1);
+    free_dia(sstate->remote_dia, 0);
+    free_dia(sstate->local_dia, 1);
 
     sstate->remote_dia = sstate->next_remote_dia;
-    sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
+    sstate->local_dia = init_dia(sstate->remote_dia->size);
 
     sstate->next_remote_dia = NULL;
 }
 
 void reset_current_state(searchState* sstate) {
-    free_iovec_array(sstate->local_dia, 1);
-    free_iovec_array(sstate->next_remote_dia, 0);
+    free_dia(sstate->local_dia, 1);
+    free_dia(sstate->next_remote_dia, 0);
 
-    sstate->local_dia = init_iovec_array(sstate->remote_dia->size);
+    sstate->local_dia = init_dia(sstate->remote_dia->size);
 
     sstate->next_remote_dia = NULL;
 }
@@ -348,7 +362,7 @@ void reset_current_state(searchState* sstate) {
 */
 size_t search_step_dia(searchState* sstate) {
     // next_remote will be filled for the next step
-    sstate->next_remote_dia = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    sstate->next_remote_dia = init_dia(INITIAL_IOVEC_ARRAY_CAP);
     switch (sstate->type) {
         case TYPE_UINT_32:
             read_from_remote_dia(sstate->pid, sstate->local_dia,
@@ -439,11 +453,11 @@ void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
     void* write_ptr = sstate->remote_dia->data[pos].iov_base;
     // printf("\nWriting at %p ...", write_ptr);
 
-    dia* temp_write = init_iovec_array(1);
+    dia* temp_write = init_dia(1);
     struct iovec temp = {&value, sizeof(value)};
     add_iovec(temp_write, temp);
 
-    dia* temp_remote = init_iovec_array(1);
+    dia* temp_remote = init_dia(1);
     struct iovec temp_r = {write_ptr, sizeof(value)};
     add_iovec(temp_remote, temp_r);
 
@@ -694,9 +708,9 @@ int main(int argc, char** argv) {
 
     setup_terminal_resize_sig();
 
-    dia* remote = init_iovec_array(INITIAL_IOVEC_ARRAY_CAP);
+    dia* remote = init_dia(INITIAL_IOVEC_ARRAY_CAP);
     int regions = read_maps_into_dia(remote, input_pid);
-    dia* local = init_iovec_array(regions);
+    dia* local = init_dia(regions);
 
     searchState initial_sstate = {local, remote,    NULL, TYPE_UINT_32,
                                   NULL,  input_pid, 0};
