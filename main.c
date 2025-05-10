@@ -74,7 +74,7 @@ typedef struct searchState {
 /* Global variables */
 struct winsize ws;
 struct termios orig_termios;
-volatile sig_atomic_t need_resize = 0;
+volatile sig_atomic_t fb_need_resize = 0;
 struct sigaction sa;
 
 /* Error handling */
@@ -249,27 +249,9 @@ ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
 
     ssize_t nwrite = process_vm_writev(pid, local_dia->data, local_dia->size,
                                        remote_dia->data, remote_dia->size, 0);
-    if (nwrite <= 0) {
-        switch (errno) {
-            case EINVAL:
-                printf("\nERROR: Invalid arguments.");
-                break;
-            case EFAULT:
-                printf("\nERROR: Unable to access target memory.");
-                break;
-            case ENOMEM:
-                printf("\nERROR: Memory allocation failed.");
-                break;
-            case EPERM:
-                printf("\nERROR: Insufficient privileges.");
-                break;
-            case ESRCH:
-                printf("\nERROR: Process does not exist.");
-                break;
-            default:
-                printf("\nERROR: Unknown error occurred.");
-        }
-        return 1;
+    if (nwrite == -1) {
+        //TODO Hnadle
+        die("failed write");
     }
     return nwrite;
 }
@@ -462,6 +444,8 @@ void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
     add_iovec(temp_remote, temp_r);
 
     write_to_remote_dia(sstate->pid, temp_write, temp_remote);
+    free_dia(temp_write, 0);  //TODO correct?
+    free_dia(temp_remote, 0);
 }
 
 /* 
@@ -515,8 +499,9 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             }
             // INTENTIONAL FALLTROUGH
         case 'p':;
-            char* search_state = string_search_state(sstate);
-            fb_putstr(fb, 0, 3, search_state);
+            char* search_state_str = string_search_state(sstate);
+            fb_putstr(fb, 0, 3, search_state_str);
+            free(search_state_str);
             break;
         case 'w':;
             char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
@@ -627,7 +612,6 @@ void add_footer(frameBuffer* fb) {
 }
 
 /* When sigwinch triggered, we are in need of a resize */
-volatile sig_atomic_t fb_need_resize = 0;
 static void sigwinchHandler(int sig) {
     (void)sig;
     fb_need_resize = 1;
