@@ -139,11 +139,10 @@ void fb_clear_rows(frameBuffer* fb, int start_row, int end_row) {
 }
 
 /*Will remove raw_mode, and get input at a specific location in the ui.*/
-char* get_input_in_cmdbar(char* ps1) {
+void get_input_in_cmdbar(char* ps1, char* input_buf) {
     int input_row = ws.ws_row - 1;
     int input_col_ps1 = 0;
     int input_col_cmd = 10;
-    char* buffer = malloc(256 * sizeof(char));
 
     disable_raw_mode();
 
@@ -151,15 +150,13 @@ char* get_input_in_cmdbar(char* ps1) {
     printf("%s", ps1);
 
     MOVE_CURSOR(input_row, input_col_cmd);
-    fgets(buffer, 256 * sizeof(buffer), stdin);
+    fgets(input_buf, 128 * sizeof(char), stdin);
 
     enable_raw_mode();
 
     // Clear the line
     MOVE_CURSOR(input_row, input_col_ps1);
     printf("\033[2K");
-
-    return buffer;
 }
 
 dia* init_dia(size_t initial_capacity) {
@@ -477,43 +474,53 @@ void fb_putstr(frameBuffer* fb, int x, int y, const char* str) {
     }
 }
 
+/* Expects a null terminated string*/
+void draw_status(frameBuffer* fb, const char* message) {
+    fb_putstr(fb, 0, 2, message);
+}
+
+void draw_current_state(frameBuffer* fb, searchState* sstate) {
+    char* search_state_str = string_search_state(sstate);
+    fb_putstr(fb, 0, 3, search_state_str);
+    free(search_state_str);
+}
+
 /*Main command loop, parses the various subcommands and then dispatch.*/
 void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
     // Clear the previous content
     fb_clear_rows(fb, 2, fb->height - 1);
+    char input_buf[128];
     switch (cmd) {
         case 's':;
-            char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
+            get_input_in_cmdbar(SEARCH_STR, input_buf);
             int32_t search_value;
-            if (sscanf(s_subcmd, "%d", &search_value) != 1) {
+            if (sscanf(input_buf, "%d", &search_value) != 1) {
                 return;
             }
-            free(s_subcmd);
             sstate->searched = &search_value;
             size_t found = search_step_dia(sstate);
             if (found == 0) {
-                static const char* nf =
+                draw_status(
+                    fb,
                     "Not Found. Search State has not advanced. Displaying "
-                    "previous state:";
-                fb_putstr(fb, 0, 2, nf);
+                    "previous state:");
             }
-            // INTENTIONAL FALLTROUGH
+            draw_current_state(fb, sstate);
+            break;
         case 'p':;
-            char* search_state_str = string_search_state(sstate);
-            fb_putstr(fb, 0, 3, search_state_str);
-            free(search_state_str);
+            draw_current_state(fb, sstate);
             break;
         case 'w':;
-            char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
+            get_input_in_cmdbar(WRITE_STR, input_buf);
             size_t pos;
             int32_t value;
-            if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
+            if (sscanf(input_buf, "%zu %d", &pos, &value) != 2) {
                 return;
             }
-            free(w_subcmd);
-            write_value_at_pos(sstate, pos, value);
-            static const char* wr = "Written...";
-            fb_putstr(fb, 0, 2, wr);
+            char status_message_buffer[128];
+            sprintf(status_message_buffer,
+                    "Written value %d at position [%zu].", value, pos);
+            draw_status(fb, status_message_buffer);
             break;
         case 'q':  //quit
             printf(CLEAR_SCREEN);
