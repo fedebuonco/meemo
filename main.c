@@ -22,7 +22,9 @@
 #define INITIAL_IOVEC_ARRAY_CAP 64
 #define MAX_MAPS_LINES 2048
 #define IOV_MAX_BATCH 1024
-#define IOVEC_MAX_STR 128
+// #define IOVEC_MAX_STR 128 // Replaced by IOVEC_STR_MAX_LEN
+#define IOVEC_STR_MAX_LEN 128 // Max length for string representation of one iovec
+#define DIA_ENTRY_STR_MAX_LEN 150 // Max length for one formatted DIA entry line (e.g., "[idx] = <iovec_str>\n")
 
 /* UI */
 #define SEARCH_STR "\033[1;33m(search)\033[0m "
@@ -132,9 +134,15 @@ void fb_putchar(frameBuffer* fb, int x, int y, char ch) {
 
 /*  Clears the frameBuffer from start_row to end_row */
 void fb_clear_rows(frameBuffer* fb, int start_row, int end_row) {
-    int i = (start_row * fb->width);
-    for (; i <= end_row * fb->width; i++) {
-        fb_putchar(fb, i % fb->width, i / fb->width, ' ');
+    // Ensure row indices are within bounds
+    if (start_row < 0) start_row = 0;
+    if (end_row >= fb->height) end_row = fb->height - 1; // Ensure end_row is a valid index
+    if (start_row > end_row || start_row >= fb->height) return; // Nothing to clear or start_row is out of bounds
+
+    for (int r = start_row; r <= end_row; ++r) {
+        for (int c = 0; c < fb->width; ++c) {
+            fb_putchar(fb, c, r, ' ');
+        }
     }
 }
 
@@ -166,7 +174,7 @@ dia* init_dia(size_t initial_capacity) {
     dia* arr = malloc(sizeof(dia));
     arr->size = 0;
     arr->capacity = initial_capacity;
-    arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
+    arr->data = calloc(arr->capacity, sizeof(struct iovec)); // Removed C-style cast
     if (!arr->data) {
         die("Failed to allocate memory for a dynamic iovec array.");
     }
@@ -264,15 +272,20 @@ ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     Scan the local and every find in it put the corresponding
     remote object in the next_remote.
 */
-void search_step_for_uint32_dia(dia* local, dia* remote,
+void search_step_for_uint32_dia(const dia* local, const dia* remote,
                                 dia* next_remote_iov_array, size_t len,
-                                uint32_t* searched) {
+                                const uint32_t* searched) {
     // For each region
     for (size_t n_regions = 0; n_regions < len; n_regions++) {
         const unsigned char* base_l =
             (const unsigned char*)local->data[n_regions].iov_base;
         const unsigned char* base_r =
             (const unsigned char*)remote->data[n_regions].iov_base;
+
+        // Skip regions smaller than the search type
+        if (local->data[n_regions].iov_len < sizeof(uint32_t)) {
+            continue;
+        }
 
         // Scan all the region with a memcpy
         for (size_t offset = 0;
@@ -367,13 +380,13 @@ size_t search_step_dia(searchState* sstate) {
 }
 
 char* string_iovec(const struct iovec* io) {
-    char* iovec_str = malloc(IOVEC_MAX_STR);
+    char* iovec_str = malloc(IOVEC_STR_MAX_LEN); // Use new constant
     if (!iovec_str) {
         return NULL;
     }
-    int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d",
+    int written = snprintf(iovec_str, IOVEC_STR_MAX_LEN, "Base: %p Len: %d", // Use new constant
                            io->iov_base, (int)io->iov_len);
-    if (written < 0 || written >= IOVEC_MAX_STR) {
+    if (written < 0 || written >= IOVEC_STR_MAX_LEN) { // Use new constant
         free(iovec_str);
         return NULL;
     }
@@ -384,7 +397,7 @@ char* string_dia(const dia* arr, size_t max_elem) {
     size_t min = max_elem <= arr->size ? max_elem : arr->size;
 
     // Need to store enough potentially for all the displayed elements
-    char* dia_str = malloc(min * 50);
+    char* dia_str = malloc(min * DIA_ENTRY_STR_MAX_LEN); // Use new constant
     if (!dia_str) {
         return NULL;
     }
@@ -396,9 +409,10 @@ char* string_dia(const dia* arr, size_t max_elem) {
             free(dia_str);
             return NULL;
         }
-        int written = snprintf(p, 50, "\n[%zu] = %s", i, iovec_str);
+        // Use new constant for buffer size
+        int written = snprintf(p, DIA_ENTRY_STR_MAX_LEN, "\n[%zu] = %s", i, iovec_str);
         free(iovec_str);
-        if (written < 0 || written >= 50) {
+        if (written < 0 || written >= DIA_ENTRY_STR_MAX_LEN) { // Use new constant
             free(dia_str);
             return NULL;
         }
@@ -406,9 +420,10 @@ char* string_dia(const dia* arr, size_t max_elem) {
     }
 
     if (min < arr->size) {
-        int written = snprintf(p, 50, "\nAnd %zu more. Refine the search.",
+        // Use new constant for buffer size
+        int written = snprintf(p, DIA_ENTRY_STR_MAX_LEN, "\nAnd %zu more. Refine the search.",
                                arr->size - min);
-        if (written < 0 || written >= 50) {
+        if (written < 0 || written >= DIA_ENTRY_STR_MAX_LEN) { // Use new constant
             free(dia_str);
             return NULL;
         }
@@ -426,13 +441,12 @@ char* string_search_state(searchState* sstate) {
     return string_dia(sstate->remote_dia, ws.ws_row - 8);
 }
 
-void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
+int write_value_at_pos(searchState* sstate, size_t pos, uint32_t value) { // Return type changed to int
     if (pos >= sstate->remote_dia->size) {
-        return;
+        return 0; // Indicate failure: invalid position
     }
 
     void* write_ptr = sstate->remote_dia->data[pos].iov_base;
-    // printf("\nWriting at %p ...", write_ptr);
 
     dia* temp_write = init_dia(1);
     struct iovec temp = {&value, sizeof(value)};
@@ -442,9 +456,14 @@ void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
     struct iovec temp_r = {write_ptr, sizeof(value)};
     add_iovec(temp_remote, temp_r);
 
-    write_to_remote_dia(sstate->pid, temp_write, temp_remote);
-    free_dia(temp_write, 0);  //TODO correct?
+    ssize_t nwrite = write_to_remote_dia(sstate->pid, temp_write, temp_remote);
+    free_dia(temp_write, 0);
     free_dia(temp_remote, 0);
+
+    if (nwrite == -1 || (size_t)nwrite < sizeof(value)) {
+        return 0; // Indicate failure: write error or incomplete write
+    }
+    return 1; // Indicate success
 }
 
 /* 
@@ -483,8 +502,8 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
     switch (cmd) {
         case 's':;
             char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
-            int32_t search_value;
-            if (sscanf(s_subcmd, "%d", &search_value) != 1) {
+            uint32_t search_value; // Changed from int32_t
+            if (sscanf(s_subcmd, "%u", &search_value) != 1) { // Changed from %d
                 static const char* err_msg = "Invalid search value. Please enter a number.";
                 fb_putstr(fb, 0, 2, err_msg);
                 free(s_subcmd);
@@ -533,17 +552,21 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
         case 'w':;
             char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
             size_t pos;
-            int32_t value;
-            if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
+            uint32_t value; // Changed from int32_t
+            if (sscanf(w_subcmd, "%zu %u", &pos, &value) != 2) { // Changed from %d
                 static const char* err_msg = "Invalid format for write. Use: <pos> <value>.";
                 fb_putstr(fb, 0, 2, err_msg);
                 free(w_subcmd);
                 return;
             }
             free(w_subcmd);
-            write_value_at_pos(sstate, pos, value);
-            static const char* wr = "Written...";
-            fb_putstr(fb, 0, 2, wr);
+            if (write_value_at_pos(sstate, pos, value)) {
+                static const char* success_msg = "Value written successfully.";
+                fb_putstr(fb, 0, 2, success_msg);
+            } else {
+                static const char* fail_msg = "Write operation failed.";
+                fb_putstr(fb, 0, 2, fail_msg);
+            }
             break;
         case 'q':  //quit
             printf(CLEAR_SCREEN);
