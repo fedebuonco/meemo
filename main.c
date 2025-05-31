@@ -22,7 +22,9 @@
 #define INITIAL_IOVEC_ARRAY_CAP 64
 #define MAX_MAPS_LINES 2048
 #define IOV_MAX_BATCH 1024
-#define IOVEC_MAX_STR 128
+// #define IOVEC_MAX_STR 128 // Replaced by IOVEC_STR_MAX_LEN
+#define IOVEC_STR_MAX_LEN 128 // Max length for string representation of one iovec
+#define DIA_ENTRY_STR_MAX_LEN 150 // Max length for one formatted DIA entry line (e.g., "[idx] = <iovec_str>\n")
 
 /* UI */
 #define SEARCH_STR "\033[1;33m(search)\033[0m "
@@ -39,6 +41,9 @@ typedef enum {
     TYPE_UINT_64,
     TYPE_CHAR,
     TYPE_NONE,
+    TYPE_UINT_32_UNKNOWN_INIT, // For first 'u' command
+    TYPE_UINT_32_HIGHER,       // For 'h' command
+    TYPE_UINT_32_LOWER,        // For 'l' command
 } searchDataType;
 
 /* Dynamic Iovec Array */
@@ -65,6 +70,7 @@ typedef struct searchState {
     dia* local_dia;
     dia* remote_dia;
     dia* next_remote_dia;
+    dia* snapshot_dia; // For higher/lower searches, stores a snapshot of local_dia
     searchDataType type;
     void* searched;
     pid_t pid;
@@ -132,9 +138,15 @@ void fb_putchar(frameBuffer* fb, int x, int y, char ch) {
 
 /*  Clears the frameBuffer from start_row to end_row */
 void fb_clear_rows(frameBuffer* fb, int start_row, int end_row) {
-    int i = (start_row * fb->width);
-    for (; i <= end_row * fb->width; i++) {
-        fb_putchar(fb, i % fb->width, i / fb->width, ' ');
+    // Ensure row indices are within bounds
+    if (start_row < 0) start_row = 0;
+    if (end_row >= fb->height) end_row = fb->height - 1; // Ensure end_row is a valid index
+    if (start_row > end_row || start_row >= fb->height) return; // Nothing to clear or start_row is out of bounds
+
+    for (int r = start_row; r <= end_row; ++r) {
+        for (int c = 0; c < fb->width; ++c) {
+            fb_putchar(fb, c, r, ' ');
+        }
     }
 }
 
@@ -166,7 +178,7 @@ dia* init_dia(size_t initial_capacity) {
     dia* arr = malloc(sizeof(dia));
     arr->size = 0;
     arr->capacity = initial_capacity;
-    arr->data = (struct iovec*)calloc(arr->capacity, sizeof(struct iovec));
+    arr->data = calloc(arr->capacity, sizeof(struct iovec)); // Removed C-style cast
     if (!arr->data) {
         die("Failed to allocate memory for a dynamic iovec array.");
     }
@@ -212,7 +224,7 @@ ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
                                          riovec + offset, batch, 0);
 
         if (nread == -1) {
-            //TODO
+            perror("Error during batch_process_vm_readv (process_vm_readv call failed)");
             break;
         }
         total_read += nread;
@@ -250,8 +262,7 @@ ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     ssize_t nwrite = process_vm_writev(pid, local_dia->data, local_dia->size,
                                        remote_dia->data, remote_dia->size, 0);
     if (nwrite == -1) {
-        //TODO Hnadle
-        die("failed write");
+        perror("Error during write_to_remote_dia (process_vm_writev call failed)");
     }
     return nwrite;
 }
@@ -265,15 +276,20 @@ ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     Scan the local and every find in it put the corresponding
     remote object in the next_remote.
 */
-void search_step_for_uint32_dia(dia* local, dia* remote,
+void search_step_for_uint32_dia(const dia* local, const dia* remote,
                                 dia* next_remote_iov_array, size_t len,
-                                uint32_t* searched) {
+                                const uint32_t* searched) {
     // For each region
     for (size_t n_regions = 0; n_regions < len; n_regions++) {
         const unsigned char* base_l =
             (const unsigned char*)local->data[n_regions].iov_base;
         const unsigned char* base_r =
             (const unsigned char*)remote->data[n_regions].iov_base;
+
+        // Skip regions smaller than the search type
+        if (local->data[n_regions].iov_len < sizeof(uint32_t)) {
+            continue;
+        }
 
         // Scan all the region with a memcpy
         for (size_t offset = 0;
@@ -368,13 +384,13 @@ size_t search_step_dia(searchState* sstate) {
 }
 
 char* string_iovec(const struct iovec* io) {
-    char* iovec_str = malloc(IOVEC_MAX_STR);
+    char* iovec_str = malloc(IOVEC_STR_MAX_LEN); // Use new constant
     if (!iovec_str) {
         return NULL;
     }
-    int written = snprintf(iovec_str, IOVEC_MAX_STR, "Base: %p Len: %d",
+    int written = snprintf(iovec_str, IOVEC_STR_MAX_LEN, "Base: %p Len: %d", // Use new constant
                            io->iov_base, (int)io->iov_len);
-    if (written < 0 || written >= IOVEC_MAX_STR) {
+    if (written < 0 || written >= IOVEC_STR_MAX_LEN) { // Use new constant
         free(iovec_str);
         return NULL;
     }
@@ -385,7 +401,7 @@ char* string_dia(const dia* arr, size_t max_elem) {
     size_t min = max_elem <= arr->size ? max_elem : arr->size;
 
     // Need to store enough potentially for all the displayed elements
-    char* dia_str = malloc(min * 50);
+    char* dia_str = malloc(min * DIA_ENTRY_STR_MAX_LEN); // Use new constant
     if (!dia_str) {
         return NULL;
     }
@@ -397,9 +413,10 @@ char* string_dia(const dia* arr, size_t max_elem) {
             free(dia_str);
             return NULL;
         }
-        int written = snprintf(p, 50, "\n[%zu] = %s", i, iovec_str);
+        // Use new constant for buffer size
+        int written = snprintf(p, DIA_ENTRY_STR_MAX_LEN, "\n[%zu] = %s", i, iovec_str);
         free(iovec_str);
-        if (written < 0 || written >= 50) {
+        if (written < 0 || written >= DIA_ENTRY_STR_MAX_LEN) { // Use new constant
             free(dia_str);
             return NULL;
         }
@@ -407,9 +424,10 @@ char* string_dia(const dia* arr, size_t max_elem) {
     }
 
     if (min < arr->size) {
-        int written = snprintf(p, 50, "\nAnd %zu more. Refine the search.",
+        // Use new constant for buffer size
+        int written = snprintf(p, DIA_ENTRY_STR_MAX_LEN, "\nAnd %zu more. Refine the search.",
                                arr->size - min);
-        if (written < 0 || written >= 50) {
+        if (written < 0 || written >= DIA_ENTRY_STR_MAX_LEN) { // Use new constant
             free(dia_str);
             return NULL;
         }
@@ -427,13 +445,12 @@ char* string_search_state(searchState* sstate) {
     return string_dia(sstate->remote_dia, ws.ws_row - 8);
 }
 
-void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
+int write_value_at_pos(searchState* sstate, size_t pos, uint32_t value) { // Return type changed to int
     if (pos >= sstate->remote_dia->size) {
-        return;
+        return 0; // Indicate failure: invalid position
     }
 
     void* write_ptr = sstate->remote_dia->data[pos].iov_base;
-    // printf("\nWriting at %p ...", write_ptr);
 
     dia* temp_write = init_dia(1);
     struct iovec temp = {&value, sizeof(value)};
@@ -443,9 +460,14 @@ void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
     struct iovec temp_r = {write_ptr, sizeof(value)};
     add_iovec(temp_remote, temp_r);
 
-    write_to_remote_dia(sstate->pid, temp_write, temp_remote);
-    free_dia(temp_write, 0);  //TODO correct?
+    ssize_t nwrite = write_to_remote_dia(sstate->pid, temp_write, temp_remote);
+    free_dia(temp_write, 0);
     free_dia(temp_remote, 0);
+
+    if (nwrite == -1 || (size_t)nwrite < sizeof(value)) {
+        return 0; // Indicate failure: write error or incomplete write
+    }
+    return 1; // Indicate success
 }
 
 /* 
@@ -483,9 +505,17 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
     fb_clear_rows(fb, 2, fb->height - 1);
     switch (cmd) {
         case 's':;
+            // When a new specific value search starts, clear any existing snapshot
+            if (sstate->snapshot_dia) {
+                free_dia(sstate->snapshot_dia, 1); // Assuming snapshot_dia owns its iovec bases
+                sstate->snapshot_dia = NULL;
+            }
             char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
-            int32_t search_value;
-            if (sscanf(s_subcmd, "%d", &search_value) != 1) {
+            uint32_t search_value; // Changed from int32_t
+            if (sscanf(s_subcmd, "%u", &search_value) != 1) { // Changed from %d
+                static const char* err_msg = "Invalid search value. Please enter a number.";
+                fb_putstr(fb, 0, 2, err_msg);
+                free(s_subcmd);
                 return;
             }
             free(s_subcmd);
@@ -493,27 +523,306 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             size_t found = search_step_dia(sstate);
             if (found == 0) {
                 static const char* nf =
-                    "Not Found. Search State has not advanced. Displaying "
-                    "previous state:";
+                    "Value not found in current results. Displaying current results:";
                 fb_putstr(fb, 0, 2, nf);
             }
-            // INTENTIONAL FALLTROUGH
+            goto print_results_label; // 's' command jumps to print
+
+        case 'h': {
+            // Pre-condition checks
+            if (!sstate->snapshot_dia) {
+                static const char* err_msg = "No snapshot available. Use 'u' command first.";
+                fb_putstr(fb, 0, 2, err_msg);
+                break; // Break from 'h', does not fall through to 'p'
+            }
+            if (!sstate->remote_dia || sstate->remote_dia->size == 0) {
+                static const char* err_msg = "No memory regions to compare. Perform a search or reset first.";
+                fb_putstr(fb, 0, 2, err_msg);
+                break; // Break from 'h'
+            }
+            if (sstate->remote_dia->size != sstate->snapshot_dia->size) {
+                static const char* err_msg = "Snapshot size mismatch. Please use 'u' again.";
+                fb_putstr(fb, 0, 2, err_msg);
+                // Consider freeing snapshot_dia here as it's inconsistent
+                free_dia(sstate->snapshot_dia, 1);
+                sstate->snapshot_dia = NULL;
+                break; // Break from 'h'
+            }
+
+            dia* current_values_dia = init_dia(sstate->remote_dia->size);
+            if (!current_values_dia) { // Should be handled by die() in init_dia
+                static const char* err_mem = "Failed to initialize temporary DIA for current values.";
+                fb_putstr(fb, 0, 2, err_mem);
+                break; // Break from 'h'
+            }
+
+            ssize_t nread = read_from_remote_dia(sstate->pid, current_values_dia, sstate->remote_dia);
+            if (sstate->remote_dia->size > 0 && current_values_dia->size == 0) { // Check if anything was actually read into current_values_dia
+                static const char* err_read = "Failed to read current values for comparison. See stderr.";
+                fb_putstr(fb, 0, 2, err_read);
+                free_dia(current_values_dia, 1);
+                break; // Break from 'h'
+            }
+
+            if (sstate->next_remote_dia) {
+                free_dia(sstate->next_remote_dia, 0); // Free old next_remote_dia if any
+                sstate->next_remote_dia = NULL;
+            }
+            sstate->next_remote_dia = init_dia(INITIAL_IOVEC_ARRAY_CAP);
+            if (!sstate->next_remote_dia) { // Should be handled by die()
+                static const char* err_mem_next = "Failed to initialize DIA for next results.";
+                fb_putstr(fb, 0, 2, err_mem_next);
+                free_dia(current_values_dia, 1);
+                break; // Break from 'h'
+            }
+
+            for (size_t i = 0; i < sstate->remote_dia->size; ++i) {
+                if (i >= current_values_dia->size) continue; // Safety: current_values might be smaller if partial read
+
+                if (!sstate->snapshot_dia->data[i].iov_base || sstate->snapshot_dia->data[i].iov_len < sizeof(uint32_t) ||
+                    !current_values_dia->data[i].iov_base || current_values_dia->data[i].iov_len < sizeof(uint32_t)) {
+                    continue; // Skip if data is invalid or too small
+                }
+
+                uint32_t previous_val = *((uint32_t*)sstate->snapshot_dia->data[i].iov_base);
+                uint32_t current_val = *((uint32_t*)current_values_dia->data[i].iov_base);
+
+                if (current_val > previous_val) {
+                    add_iovec(sstate->next_remote_dia, sstate->remote_dia->data[i]);
+                }
+            }
+
+            sstate->type = TYPE_UINT_32_HIGHER;
+            sstate->search_cnt++;
+            size_t found_h = sstate->next_remote_dia->size; // Renamed to avoid conflict with 's' case 'found'
+            char msg_buf[128];
+
+            if (found_h == 0) {
+                reset_current_state(sstate); // Keeps remote_dia and snapshot_dia
+                snprintf(msg_buf, sizeof(msg_buf), "No values increased. (Scan %d)", sstate->search_cnt);
+            } else {
+                free_dia(sstate->snapshot_dia, 1); // Free old snapshot data
+                sstate->snapshot_dia = NULL;
+
+                advance_state(sstate); // remote_dia becomes next_remote_dia, local_dia is reset
+
+                sstate->snapshot_dia = init_dia(sstate->remote_dia->size); // New snapshot for new remote_dia
+                if (!sstate->snapshot_dia) {
+                    snprintf(msg_buf, sizeof(msg_buf), "%zu values increased. (Scan %d) Error: Failed to re-snapshot.", found_h, sstate->search_cnt);
+                } else {
+                    ssize_t new_snap_nread = read_from_remote_dia(sstate->pid, sstate->snapshot_dia, sstate->remote_dia);
+                    if (sstate->remote_dia->size > 0 && sstate->snapshot_dia->size == 0) { // Check if new snapshot is empty
+                        snprintf(msg_buf, sizeof(msg_buf), "%zu values increased. (Scan %d) Failed to re-snapshot.", found_h, sstate->search_cnt);
+                        free_dia(sstate->snapshot_dia, 1);
+                        sstate->snapshot_dia = NULL;
+                    } else {
+                        snprintf(msg_buf, sizeof(msg_buf), "%zu values increased. (Scan %d) New snapshot taken.", found_h, sstate->search_cnt);
+                    }
+                }
+            }
+            free_dia(current_values_dia, 1);
+            fb_putstr(fb, 0, 2, msg_buf);
+            goto print_results_label; // 'h' command jumps to print
+        }
+        case 'l': {
+            // Pre-condition checks (similar to 'h')
+            if (!sstate->snapshot_dia) {
+                static const char* err_msg = "No snapshot available. Use 'u' command first.";
+                fb_putstr(fb, 0, 2, err_msg);
+                break;
+            }
+            if (!sstate->remote_dia || sstate->remote_dia->size == 0) {
+                static const char* err_msg = "No memory regions to compare. Perform a search or reset first.";
+                fb_putstr(fb, 0, 2, err_msg);
+                break;
+            }
+            if (sstate->remote_dia->size != sstate->snapshot_dia->size) {
+                static const char* err_msg = "Snapshot size mismatch. Please use 'u' again.";
+                fb_putstr(fb, 0, 2, err_msg);
+                free_dia(sstate->snapshot_dia, 1);
+                sstate->snapshot_dia = NULL;
+                break;
+            }
+
+            dia* current_values_dia = init_dia(sstate->remote_dia->size);
+            if (!current_values_dia) {
+                static const char* err_mem = "Failed to initialize temporary DIA for current values.";
+                fb_putstr(fb, 0, 2, err_mem);
+                break;
+            }
+
+            ssize_t nread = read_from_remote_dia(sstate->pid, current_values_dia, sstate->remote_dia);
+            if (sstate->remote_dia->size > 0 && current_values_dia->size == 0) {
+                static const char* err_read = "Failed to read current values for comparison. See stderr.";
+                fb_putstr(fb, 0, 2, err_read);
+                free_dia(current_values_dia, 1);
+                break;
+            }
+
+            if (sstate->next_remote_dia) {
+                free_dia(sstate->next_remote_dia, 0);
+                sstate->next_remote_dia = NULL;
+            }
+            sstate->next_remote_dia = init_dia(INITIAL_IOVEC_ARRAY_CAP);
+            if (!sstate->next_remote_dia) {
+                static const char* err_mem_next = "Failed to initialize DIA for next results.";
+                fb_putstr(fb, 0, 2, err_mem_next);
+                free_dia(current_values_dia, 1);
+                break;
+            }
+
+            for (size_t i = 0; i < sstate->remote_dia->size; ++i) {
+                if (i >= current_values_dia->size) continue;
+
+                if (!sstate->snapshot_dia->data[i].iov_base || sstate->snapshot_dia->data[i].iov_len < sizeof(uint32_t) ||
+                    !current_values_dia->data[i].iov_base || current_values_dia->data[i].iov_len < sizeof(uint32_t)) {
+                    continue;
+                }
+
+                uint32_t previous_val = *((uint32_t*)sstate->snapshot_dia->data[i].iov_base);
+                uint32_t current_val = *((uint32_t*)current_values_dia->data[i].iov_base);
+
+                if (current_val < previous_val) { // Main difference: < instead of >
+                    add_iovec(sstate->next_remote_dia, sstate->remote_dia->data[i]);
+                }
+            }
+
+            sstate->type = TYPE_UINT_32_LOWER; // Set type to LOWER
+            sstate->search_cnt++;
+            size_t found = sstate->next_remote_dia->size;
+            char msg_buf[128];
+
+            if (found == 0) {
+                reset_current_state(sstate);
+                snprintf(msg_buf, sizeof(msg_buf), "No values decreased. (Scan %d)", sstate->search_cnt);
+            } else {
+                free_dia(sstate->snapshot_dia, 1);
+                sstate->snapshot_dia = NULL;
+
+                advance_state(sstate);
+
+                sstate->snapshot_dia = init_dia(sstate->remote_dia->size);
+                if (!sstate->snapshot_dia) {
+                    snprintf(msg_buf, sizeof(msg_buf), "%zu values decreased. (Scan %d) Error: Failed to re-snapshot.", found, sstate->search_cnt);
+                } else {
+                    ssize_t new_snap_nread = read_from_remote_dia(sstate->pid, sstate->snapshot_dia, sstate->remote_dia);
+                    if (sstate->remote_dia->size > 0 && sstate->snapshot_dia->size == 0) {
+                        snprintf(msg_buf, sizeof(msg_buf), "%zu values decreased. (Scan %d) Failed to re-snapshot.", found, sstate->search_cnt);
+                        free_dia(sstate->snapshot_dia, 1);
+                        sstate->snapshot_dia = NULL;
+                    } else {
+                        snprintf(msg_buf, sizeof(msg_buf), "%zu values decreased. (Scan %d) New snapshot taken.", found, sstate->search_cnt);
+                    }
+                }
+            }
+            free_dia(current_values_dia, 1);
+            fb_putstr(fb, 0, 2, msg_buf);
+            goto print_results_label; // Jump to print case
+        }
+print_results_label:
         case 'p':;
             char* search_state_str = string_search_state(sstate);
             fb_putstr(fb, 0, 3, search_state_str);
             free(search_state_str);
             break;
+        case 'r':;
+            // Free existing dia structures
+            free_dia(sstate->local_dia, 1);
+            free_dia(sstate->remote_dia, 0);
+
+            // Re-initialize remote_dia
+            sstate->remote_dia = init_dia(INITIAL_IOVEC_ARRAY_CAP);
+            read_maps_into_dia(sstate->remote_dia, sstate->pid);
+
+            // Re-initialize local_dia
+            sstate->local_dia = init_dia(sstate->remote_dia->size);
+
+            // Reset other search state variables
+            sstate->searched = NULL;
+            sstate->type = TYPE_UINT_32; // Default type
+            sstate->search_cnt = 0;
+
+            // Free next_remote_dia if it's not NULL
+            if (sstate->next_remote_dia != NULL) {
+                free_dia(sstate->next_remote_dia, 0);
+                sstate->next_remote_dia = NULL;
+            }
+
+            // Free snapshot_dia if it exists
+            if (sstate->snapshot_dia) {
+                free_dia(sstate->snapshot_dia, 1); // Assuming snapshot_dia owns its iovec bases
+                sstate->snapshot_dia = NULL;
+            }
+
+            static const char* rs = "Search state reset.";
+            fb_putstr(fb, 0, 2, rs);
+            break;
+        // Fallthrough from 's' is here
+        case 'u': {
+            // Pre-condition: sstate->remote_dia should exist and have entries.
+            if (!sstate->remote_dia || sstate->remote_dia->size == 0) {
+                static const char* err_msg = "No memory regions to snapshot. Perform a search or reset first.";
+                fb_putstr(fb, 0, 2, err_msg);
+                break;
+            }
+
+            // Free existing snapshot_dia if it exists
+            if (sstate->snapshot_dia) {
+                free_dia(sstate->snapshot_dia, 1); // free_iov_bases is 1 because snapshot_dia owns its buffers
+                sstate->snapshot_dia = NULL;
+            }
+
+            // Initialize new snapshot_dia with capacity based on current remote_dia's size
+            sstate->snapshot_dia = init_dia(sstate->remote_dia->size);
+            if (!sstate->snapshot_dia) { // Should be handled by die() in init_dia, but good to be defensive
+                static const char* err_mem = "Failed to initialize snapshot.";
+                fb_putstr(fb, 0, 2, err_mem);
+                break;
+            }
+
+            // Read current values from remote_dia's addresses into snapshot_dia's buffers
+            // read_from_remote_dia allocates buffers for snapshot_dia->data[i].iov_base
+            ssize_t nread = read_from_remote_dia(sstate->pid, sstate->snapshot_dia, sstate->remote_dia);
+
+            // Check for read errors. batch_process_vm_readv (called by read_from_remote_dia) already calls perror.
+            // If nread is 0 when we expected data, it's a full failure for this snapshot.
+            if (sstate->remote_dia->size > 0 && nread == 0 && sstate->snapshot_dia->size == 0) {
+                 // Check snapshot_dia->size because read_from_remote_dia populates it incrementally
+                static const char* err_read = "Failed to read values for snapshot. See stderr for details.";
+                fb_putstr(fb, 0, 2, err_read);
+                free_dia(sstate->snapshot_dia, 1); // Clean up
+                sstate->snapshot_dia = NULL;
+                break;
+            }
+            // If nread < total expected bytes but > 0, it's a partial read. perror was called.
+            // The snapshot will contain what was read. This might be acceptable.
+
+            sstate->type = TYPE_UINT_32_UNKNOWN_INIT; // Set current search type
+            sstate->search_cnt = 0; // Reset search count for h/l series
+
+            char msg_buf[128];
+            snprintf(msg_buf, sizeof(msg_buf), "Snapshot of %zu values taken. Use 'h' (higher) or 'l' (lower).", sstate->snapshot_dia->size);
+            fb_putstr(fb, 0, 2, msg_buf);
+            break;
+        }
         case 'w':;
             char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
             size_t pos;
-            int32_t value;
-            if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
+            uint32_t value; // Changed from int32_t
+            if (sscanf(w_subcmd, "%zu %u", &pos, &value) != 2) { // Changed from %d
+                static const char* err_msg = "Invalid format for write. Use: <pos> <value>.";
+                fb_putstr(fb, 0, 2, err_msg);
+                free(w_subcmd);
                 return;
             }
             free(w_subcmd);
-            write_value_at_pos(sstate, pos, value);
-            static const char* wr = "Written...";
-            fb_putstr(fb, 0, 2, wr);
+            if (write_value_at_pos(sstate, pos, value)) {
+                static const char* success_msg = "Value written successfully.";
+                fb_putstr(fb, 0, 2, success_msg);
+            } else {
+                static const char* fail_msg = "Write operation failed.";
+                fb_putstr(fb, 0, 2, fail_msg);
+            }
             break;
         case 'q':  //quit
             printf(CLEAR_SCREEN);
@@ -600,8 +909,7 @@ void add_header(frameBuffer* fb) {
 /*  Create the footer */
 void add_footer(frameBuffer* fb) {
     static const char* cmds =
-        " s: search <value> | p: print | w: write <pos> <value> | r: reset  | "
-        "q: quit ";
+        "s:search|u:snap|h:higher|l:lower|w:write|p:print|r:reset|q:quit"; // Updated cmds string
     size_t i = 0;
     for (; i < strlen(cmds); i++) {
         fb_putchar(fb, (int)i, fb->height - 1, cmds[i]);
@@ -696,7 +1004,7 @@ int main(int argc, char** argv) {
     int regions = read_maps_into_dia(remote, input_pid);
     dia* local = init_dia(regions);
 
-    searchState initial_sstate = {local, remote,    NULL, TYPE_UINT_32,
+    searchState initial_sstate = {local, remote, NULL, NULL, TYPE_UINT_32, // Added NULL for snapshot_dia
                                   NULL,  input_pid, 0};
 
     enable_raw_mode();
@@ -710,7 +1018,6 @@ int main(int argc, char** argv) {
         if (fb_need_resize) {
             printf(CLEAR_SCREEN);
             update_terminal_size();
-            // TODO realloc?
             free_fb(&current_buffer);
             current_buffer = init_fb(ws.ws_col, ws.ws_row);
             fb_need_resize = 0;
