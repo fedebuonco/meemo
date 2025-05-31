@@ -212,7 +212,7 @@ ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
                                          riovec + offset, batch, 0);
 
         if (nread == -1) {
-            //TODO
+            perror("Error during batch_process_vm_readv (process_vm_readv call failed)");
             break;
         }
         total_read += nread;
@@ -250,8 +250,7 @@ ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
     ssize_t nwrite = process_vm_writev(pid, local_dia->data, local_dia->size,
                                        remote_dia->data, remote_dia->size, 0);
     if (nwrite == -1) {
-        //TODO Hnadle
-        die("failed write");
+        perror("Error during write_to_remote_dia (process_vm_writev call failed)");
     }
     return nwrite;
 }
@@ -486,6 +485,9 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
             int32_t search_value;
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
+                static const char* err_msg = "Invalid search value. Please enter a number.";
+                fb_putstr(fb, 0, 2, err_msg);
+                free(s_subcmd);
                 return;
             }
             free(s_subcmd);
@@ -493,8 +495,7 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             size_t found = search_step_dia(sstate);
             if (found == 0) {
                 static const char* nf =
-                    "Not Found. Search State has not advanced. Displaying "
-                    "previous state:";
+                    "Value not found in current results. Displaying current results:";
                 fb_putstr(fb, 0, 2, nf);
             }
             // INTENTIONAL FALLTROUGH
@@ -503,11 +504,40 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             fb_putstr(fb, 0, 3, search_state_str);
             free(search_state_str);
             break;
+        case 'r':;
+            // Free existing dia structures
+            free_dia(sstate->local_dia, 1);
+            free_dia(sstate->remote_dia, 0);
+
+            // Re-initialize remote_dia
+            sstate->remote_dia = init_dia(INITIAL_IOVEC_ARRAY_CAP);
+            read_maps_into_dia(sstate->remote_dia, sstate->pid);
+
+            // Re-initialize local_dia
+            sstate->local_dia = init_dia(sstate->remote_dia->size);
+
+            // Reset other search state variables
+            sstate->searched = NULL;
+            sstate->type = TYPE_UINT_32; // Default type
+            sstate->search_cnt = 0;
+
+            // Free next_remote_dia if it's not NULL
+            if (sstate->next_remote_dia != NULL) {
+                free_dia(sstate->next_remote_dia, 0);
+                sstate->next_remote_dia = NULL;
+            }
+
+            static const char* rs = "Search state reset.";
+            fb_putstr(fb, 0, 2, rs);
+            break;
         case 'w':;
             char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
             size_t pos;
             int32_t value;
             if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
+                static const char* err_msg = "Invalid format for write. Use: <pos> <value>.";
+                fb_putstr(fb, 0, 2, err_msg);
+                free(w_subcmd);
                 return;
             }
             free(w_subcmd);
@@ -710,7 +740,6 @@ int main(int argc, char** argv) {
         if (fb_need_resize) {
             printf(CLEAR_SCREEN);
             update_terminal_size();
-            // TODO realloc?
             free_fb(&current_buffer);
             current_buffer = init_fb(ws.ws_col, ws.ws_row);
             fb_need_resize = 0;
