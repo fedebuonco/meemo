@@ -71,6 +71,24 @@ typedef struct searchState {
     int search_cnt;
 } searchState;
 
+/* Function declarations */
+void cleanup_and_exit(frameBuffer* fb, searchState* sstate, int exit_code);
+
+/* Process VM functions - declared manually for older systems */
+ssize_t process_vm_readv(pid_t pid,
+                        const struct iovec *local_iov,
+                        unsigned long liovcnt,
+                        const struct iovec *remote_iov,
+                        unsigned long riovcnt,
+                        unsigned long flags);
+
+ssize_t process_vm_writev(pid_t pid,
+                         const struct iovec *local_iov,
+                         unsigned long liovcnt,
+                         const struct iovec *remote_iov,
+                         unsigned long riovcnt,
+                         unsigned long flags);
+
 /* Global variables */
 struct winsize ws;
 struct termios orig_termios;
@@ -151,7 +169,11 @@ char* get_input_in_cmdbar(char* ps1) {
     printf("%s", ps1);
 
     MOVE_CURSOR(input_row, input_col_cmd);
-    fgets(buffer, 256 * sizeof(buffer), stdin);
+    if (!fgets(buffer, 256, stdin)) {
+        free(buffer);
+        enable_raw_mode();
+        return NULL;
+    }
 
     enable_raw_mode();
 
@@ -212,7 +234,7 @@ ssize_t batch_process_vm_readv(pid_t pid, struct iovec* liovec, size_t ln,
                                          riovec + offset, batch, 0);
 
         if (nread == -1) {
-            //TODO
+            perror("process_vm_readv failed");
             break;
         }
         total_read += nread;
@@ -246,12 +268,16 @@ ssize_t read_from_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
 }
 
 ssize_t write_to_remote_dia(pid_t pid, dia* local_dia, dia* remote_dia) {
+    if (!local_dia || !remote_dia || local_dia->size != remote_dia->size) {
+        errno = EINVAL;
+        return -1;
+    }
 
     ssize_t nwrite = process_vm_writev(pid, local_dia->data, local_dia->size,
                                        remote_dia->data, remote_dia->size, 0);
     if (nwrite == -1) {
-        //TODO Hnadle
-        die("failed write");
+        perror("process_vm_writev failed");
+        return -1;
     }
     return nwrite;
 }
@@ -382,7 +408,17 @@ char* string_iovec(const struct iovec* io) {
 }
 
 char* string_dia(const dia* arr, size_t max_elem) {
+    if (!arr) {
+        return NULL;
+    }
+    
     size_t min = max_elem <= arr->size ? max_elem : arr->size;
+
+    // Check for integer overflow before malloc
+    if (min > SIZE_MAX / 50) {
+        errno = ENOMEM;
+        return NULL;
+    }
 
     // Need to store enough potentially for all the displayed elements
     char* dia_str = malloc(min * 50);
@@ -443,8 +479,12 @@ void write_value_at_pos(searchState* sstate, size_t pos, int32_t value) {
     struct iovec temp_r = {write_ptr, sizeof(value)};
     add_iovec(temp_remote, temp_r);
 
-    write_to_remote_dia(sstate->pid, temp_write, temp_remote);
-    free_dia(temp_write, 0);  //TODO correct?
+    if (write_to_remote_dia(sstate->pid, temp_write, temp_remote) == -1) {
+        free_dia(temp_write, 0);
+        free_dia(temp_remote, 0);
+        return;
+    }
+    free_dia(temp_write, 0);
     free_dia(temp_remote, 0);
 }
 
@@ -484,8 +524,16 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
     switch (cmd) {
         case 's':;
             char* s_subcmd = get_input_in_cmdbar(SEARCH_STR);
+            if (!s_subcmd) {
+                static const char* err = "Failed to get search input";
+                fb_putstr(fb, 0, 2, err);
+                return;
+            }
             int32_t search_value;
             if (sscanf(s_subcmd, "%d", &search_value) != 1) {
+                static const char* err = "Invalid search value format";
+                fb_putstr(fb, 0, 2, err);
+                free(s_subcmd);
                 return;
             }
             free(s_subcmd);
@@ -505,9 +553,17 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             break;
         case 'w':;
             char* w_subcmd = get_input_in_cmdbar(WRITE_STR);
+            if (!w_subcmd) {
+                static const char* err = "Failed to get write input";
+                fb_putstr(fb, 0, 2, err);
+                return;
+            }
             size_t pos;
             int32_t value;
             if (sscanf(w_subcmd, "%zu %d", &pos, &value) != 2) {
+                static const char* err = "Invalid write format (use: pos value)";
+                fb_putstr(fb, 0, 2, err);
+                free(w_subcmd);
                 return;
             }
             free(w_subcmd);
@@ -516,11 +572,8 @@ void handle_cmd(frameBuffer* fb, searchState* sstate, char cmd) {
             fb_putstr(fb, 0, 2, wr);
             break;
         case 'q':  //quit
-            printf(CLEAR_SCREEN);
-            printf(SHOW_CURSOR);
-            disable_raw_mode();
             printf("\nQuitting...");
-            exit(EXIT_SUCCESS);
+            cleanup_and_exit(fb, sstate, EXIT_SUCCESS);
             break;
         default:
             // TODO Add to content that the command was not recogn
@@ -561,10 +614,31 @@ frameBuffer init_fb(int width, int height) {
 }
 
 void free_fb(frameBuffer* fb) {
+    if (!fb) return;
     fb->width = 0;
     fb->height = 0;
     free(fb->front);
     free(fb->back);
+    fb->front = NULL;
+    fb->back = NULL;
+}
+
+void cleanup_and_exit(frameBuffer* fb, searchState* sstate, int exit_code) {
+    printf(CLEAR_SCREEN);
+    printf(SHOW_CURSOR);
+    disable_raw_mode();
+    
+    if (fb) {
+        free_fb(fb);
+    }
+    
+    if (sstate) {
+        free_dia(sstate->local_dia, 1);
+        free_dia(sstate->remote_dia, 0);
+        free_dia(sstate->next_remote_dia, 0);
+    }
+    
+    exit(exit_code);
 }
 
 /* 
@@ -693,13 +767,35 @@ int main(int argc, char** argv) {
     setup_terminal_resize_sig();
 
     dia* remote = init_dia(INITIAL_IOVEC_ARRAY_CAP);
+    if (!remote) {
+        fprintf(stderr, "Failed to initialize remote memory structure\n");
+        exit(EXIT_FAILURE);
+    }
+    
     int regions = read_maps_into_dia(remote, input_pid);
+    if (regions <= 0) {
+        fprintf(stderr, "No readable memory regions found for PID %d\n", input_pid);
+        free_dia(remote, 0);
+        exit(EXIT_FAILURE);
+    }
+    
     dia* local = init_dia(regions);
+    if (!local) {
+        fprintf(stderr, "Failed to initialize local memory structure\n");
+        free_dia(remote, 0);
+        exit(EXIT_FAILURE);
+    }
 
     searchState initial_sstate = {local, remote,    NULL, TYPE_UINT_32,
                                   NULL,  input_pid, 0};
 
-    enable_raw_mode();
+    if (enable_raw_mode() == -1) {
+        fprintf(stderr, "Failed to enable raw mode\n");
+        free_dia(remote, 0);
+        free_dia(local, 1);
+        exit(EXIT_FAILURE);
+    }
+    
     update_terminal_size();
 
     frameBuffer current_buffer = init_fb(ws.ws_col, ws.ws_row);
